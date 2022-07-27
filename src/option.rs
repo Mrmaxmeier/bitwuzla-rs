@@ -1,12 +1,12 @@
 //! This module exposes options which can be set on a `Btor` instance.
 
 /// Documentation for individual options and their possible values are
-/// more-or-less taken verbatim from the Boolector 3.0.0 docs.
+/// more-or-less taken verbatim from the bitwuzla 3.0.0 docs.
 pub enum BtorOption {
     /// Whether to generate a model (set of concrete solution values) for
     /// satisfiable instances
     ModelGen(ModelGen),
-    /// Enable/disable incremental mode. Note that the Boolector 3.0.0 docs say
+    /// Enable/disable incremental mode. Note that the bitwuzla 3.0.0 docs say
     /// that "disabling incremental usage is currently not supported".
     Incremental(bool),
     /// Set incremental mode for SMT-LIB v1 input. The default is
@@ -26,18 +26,18 @@ pub enum BtorOption {
     SolverTimeout(Option<std::time::Duration>),
     /// Solver engine. The default is `SolverEngine::Fun`.
     SolverEngine(SolverEngine),
-    /// SAT solver. Each option requires that Boolector was compiled with support
+    /// SAT solver. Each option requires that bitwuzla was compiled with support
     /// for the corresponding solver.
     SatEngine(SatEngine),
     /// Enable/disable auto cleanup of all references held on exit.
     AutoCleanup(bool),
     /// Enable/disable pretty printing when dumping.
     PrettyPrint(bool),
-    /// Seed for Boolector's internal random number generator. The default is 0.
+    /// Seed for bitwuzla's internal random number generator. The default is 0.
     Seed(u32),
     /// Rewrite level. The default is `RewriteLevel::Full`.
     ///
-    /// Boolector's docs say to not change this setting after creating expressions.
+    /// bitwuzla's docs say to not change this setting after creating expressions.
     RewriteLevel(RewriteLevel),
     /// Enable/disable skeleton preprocessing during simplification.
     SkeletonPreproc(bool),
@@ -276,6 +276,10 @@ pub enum SatEngine {
     CaDiCaL,
     /// CryptoMiniSat
     CMS,
+    /// Gimsatul
+    Gimsatul,
+    /// Kissat
+    Kissat,
     /// Lingeling
     Lingeling,
     /// MiniSAT

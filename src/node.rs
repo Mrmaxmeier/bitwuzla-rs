@@ -1,6 +1,6 @@
-use crate::btor::Btor;
+use crate::btor::Bitwuzla;
 use crate::sort::Sort;
-use boolector_sys::*;
+use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -13,29 +13,29 @@ use std::os::raw::{c_char, c_void};
 /// For instance, you could use `BV<Rc<Btor>>` for single-threaded applications,
 /// or `BV<Arc<Btor>>` for multi-threaded applications.
 #[derive(PartialEq, Eq)]
-pub struct BV<R: Borrow<Btor> + Clone> {
+pub struct BV<R: Borrow<Bitwuzla> + Clone> {
     pub(crate) btor: R,
-    pub(crate) node: *mut BoolectorNode,
+    pub(crate) node: *const BitwuzlaTerm,
 }
 
 // According to
-// https://groups.google.com/forum/#!msg/boolector/itYGgJxU3mY/AC2O0898BAAJ,
-// the Boolector library is thread-safe, meaning `*mut BoolectorNode` can be
+// https://groups.google.com/forum/#!msg/bitwuzla/itYGgJxU3mY/AC2O0898BAAJ,
+// the bitwuzla library is thread-safe, meaning `*const BitwuzlaTerm` can be
 // both `Send` and `Sync`.
 // So as long as `R` is `Send` and/or `Sync`, we can mark `BV` as `Send` and/or
 // `Sync` respectively.
-unsafe impl<R: Borrow<Btor> + Clone + Send> Send for BV<R> {}
-unsafe impl<R: Borrow<Btor> + Clone + Sync> Sync for BV<R> {}
+unsafe impl<R: Borrow<Bitwuzla> + Clone + Send> Send for BV<R> {}
+unsafe impl<R: Borrow<Bitwuzla> + Clone + Sync> Sync for BV<R> {}
 
 // The attr:meta stuff is so that doc comments work correctly.
 // See https://stackoverflow.com/questions/41361897/documenting-a-function-created-with-a-macro-in-rust
 macro_rules! unop {
-    ( $(#[$attr:meta])* => $f:ident, $rawfn:ident ) => {
+    ( $(#[$attr:meta])* => $f:ident, $kind:ident ) => {
         $(#[$attr])*
         pub fn $f(&self) -> Self {
             Self {
                 btor: self.btor.clone(),
-                node: unsafe { $rawfn(self.btor.borrow().as_raw(), self.node) },
+                node: unsafe { bitwuzla_mk_term1(self.btor.borrow().as_raw(), $kind, self.node) },
             }
         }
     };
@@ -44,18 +44,18 @@ macro_rules! unop {
 // The attr:meta stuff is so that doc comments work correctly.
 // See https://stackoverflow.com/questions/41361897/documenting-a-function-created-with-a-macro-in-rust
 macro_rules! binop {
-    ( $(#[$attr:meta])* => $f:ident, $rawfn:ident ) => {
+    ( $(#[$attr:meta])* => $f:ident, $kind:ident ) => {
         $(#[$attr])*
         pub fn $f(&self, other: &Self) -> Self {
             Self {
                 btor: self.btor.clone(),
-                node: unsafe { $rawfn(self.btor.borrow().as_raw(), self.node, other.node) },
+                node:  unsafe { bitwuzla_mk_term2(self.btor.borrow().as_raw(), $kind, self.node, other.node) },
             }
         }
     };
 }
 
-impl<R: Borrow<Btor> + Clone> BV<R> {
+impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     /// Create a new unconstrained `BV` variable of the given `width`.
     ///
     /// The `symbol`, if present, will be used to identify the `BV` when printing
@@ -66,10 +66,10 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Bitwuzla, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
+    /// let btor = Rc::new(Bitwuzla::new());
     /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
@@ -87,12 +87,12 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         let sort = Sort::bitvector(btor.clone(), width);
         let node = match symbol {
             None => unsafe {
-                boolector_var(btor.borrow().as_raw(), sort.as_raw(), std::ptr::null())
+                bitwuzla_mk_const(btor.borrow().as_raw(), sort.as_raw(), std::ptr::null())
             },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { boolector_var(btor.borrow().as_raw(), sort.as_raw(), symbol) }
+                unsafe { bitwuzla_mk_const(btor.borrow().as_raw(), sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
@@ -104,24 +104,23 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// The resulting `BV` will be either constant `0` or constant `1`, and will
     /// have bitwidth 1.
     pub fn from_bool(btor: R, b: bool) -> Self {
-        Self {
-            node: {
-                if b {
-                    unsafe { boolector_true(btor.borrow().as_raw()) }
-                } else {
-                    unsafe { boolector_false(btor.borrow().as_raw()) }
-                }
-            },
-            btor, // out of order so it can be used above but moved in here
-        }
+        let node = if b {
+            unsafe { bitwuzla_mk_true(btor.borrow().as_raw()) }
+        } else {
+            unsafe { bitwuzla_mk_false(btor.borrow().as_raw()) }
+        };
+        Self { btor, node }
     }
 
     /// Create a new constant `BV` representing the given signed integer.
     /// The new `BV` will have the width `width`, which must not be 0.
     pub fn from_i32(btor: R, i: i32, width: u32) -> Self {
+        // TODO: how to handle sign extend?
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe { boolector_int(btor.borrow().as_raw(), i, sort.as_raw()) },
+            node: unsafe {
+                bitwuzla_mk_bv_value_uint64(btor.borrow().as_raw(), sort.as_raw(), i as u32 as u64)
+            },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -133,7 +132,9 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     pub fn from_u32(btor: R, u: u32, width: u32) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe { boolector_unsigned_int(btor.borrow().as_raw(), u, sort.as_raw()) },
+            node: unsafe {
+                bitwuzla_mk_bv_value_uint64(btor.borrow().as_raw(), sort.as_raw(), u as u64)
+            },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -161,20 +162,10 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// Create a new constant `BV` representing the given unsigned integer.
     /// The new `BV` will have the width `width`, which must not be 0.
     pub fn from_u64(btor: R, u: u64, width: u32) -> Self {
-        let low_bits = (u & 0xFFFF_FFFF) as u32;
-        let high_bits = (u >> 32) as u32;
-        if width <= 32 {
-            Self::from_u32(btor, low_bits, width)
-        } else {
-            let bv64 = Self::from_u32(btor.clone(), high_bits, 32)
-                .concat(&Self::from_u32(btor, low_bits, 32));
-            if width < 64 {
-                bv64.slice(width - 1, 0)
-            } else if width == 64 {
-                bv64
-            } else {
-                bv64.sext(width - 64)
-            }
+        let sort = Sort::bitvector(btor.clone(), width);
+        Self {
+            node: unsafe { bitwuzla_mk_bv_value_uint64(btor.borrow().as_raw(), sort.as_raw(), u) },
+            btor, // out of order so it can be used above but moved in here
         }
     }
 
@@ -184,16 +175,18 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
+    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
     /// let zero = BV::zero(btor.clone(), 8);
     /// assert_eq!(zero.as_u64().unwrap(), 0);
     /// ```
     pub fn zero(btor: R, width: u32) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe { boolector_zero(btor.borrow().as_raw(), sort.as_raw()) },
+            node: unsafe { bitwuzla_mk_bv_zero(btor.borrow().as_raw(), sort.as_raw()) },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -204,7 +197,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// let one = BV::one(btor.clone(), 8);
@@ -213,7 +206,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     pub fn one(btor: R, width: u32) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe { boolector_one(btor.borrow().as_raw(), sort.as_raw()) },
+            node: unsafe { bitwuzla_mk_bv_one(btor.borrow().as_raw(), sort.as_raw()) },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -224,7 +217,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// let ones = BV::ones(btor.clone(), 8);
@@ -233,7 +226,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     pub fn ones(btor: R, width: u32) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe { boolector_ones(btor.borrow().as_raw(), sort.as_raw()) },
+            node: unsafe { bitwuzla_mk_bv_ones(btor.borrow().as_raw(), sort.as_raw()) },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -245,10 +238,16 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     ///
     /// The resulting `BV` will have bitwidth equal to the length of `bits`.
     pub fn from_binary_str(btor: R, bits: &str) -> Self {
+        let sort = Sort::bitvector(btor.clone(), bits.len() as u32);
         let cstring = CString::new(bits).unwrap();
         Self {
             node: unsafe {
-                boolector_const(btor.borrow().as_raw(), cstring.as_ptr() as *const c_char)
+                bitwuzla_mk_bv_value(
+                    btor.borrow().as_raw(),
+                    sort.as_raw(),
+                    cstring.as_ptr(),
+                    BITWUZLA_BV_BASE_BIN,
+                )
             },
             btor, // out of order so it can be used above but moved in here
         }
@@ -262,10 +261,11 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         let cstring = CString::new(num).unwrap();
         Self {
             node: unsafe {
-                boolector_constd(
+                bitwuzla_mk_bv_value(
                     btor.borrow().as_raw(),
                     sort.as_raw(),
                     cstring.as_ptr() as *const c_char,
+                    BITWUZLA_BV_BASE_DEC,
                 )
             },
             btor, // out of order so it can be used above but moved in here
@@ -280,10 +280,11 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         let cstring = CString::new(num).unwrap();
         Self {
             node: unsafe {
-                boolector_consth(
+                bitwuzla_mk_bv_value(
                     btor.borrow().as_raw(),
                     sort.as_raw(),
                     cstring.as_ptr() as *const c_char,
+                    BITWUZLA_BV_BASE_HEX,
                 )
             },
             btor, // out of order so it can be used above but moved in here
@@ -304,7 +305,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
@@ -318,11 +319,59 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// ```
     pub fn as_binary_str(&self) -> Option<String> {
         if self.is_const() {
-            let raw = unsafe { boolector_get_bits(self.btor.borrow().as_raw(), self.node) };
-            let cstr = unsafe { CStr::from_ptr(raw) };
-            let string = cstr.to_str().unwrap().to_owned();
-            unsafe { boolector_free_bits(self.btor.borrow().as_raw(), raw) };
-            Some(string)
+            /*
+            #[repr(C)]
+            pub struct BzlaBitVector {
+                _unused: [u8; 0],
+            }
+            extern "C" {
+                // fn bzla_bv_to_uint64(bv: *const BzlaBitVector) -> u64;
+                // fn bzla_bv_get_width(bv: *const BzlaBitVector) -> u32;
+                fn print_fmt_bv_model_btor(
+                    bzla: *mut bitwuzla_sys::Bitwuzla,
+                    base: u32,
+                    assignment: *const BzlaBitVector,
+                    file: *const libc::FILE,
+                );
+                fn bzla_model_get_bv(
+                    bzla: *mut bitwuzla_sys::Bitwuzla,
+                    exp: *const BitwuzlaTerm,
+                ) -> *const BzlaBitVector;
+            }
+            let width = self.get_width();
+            */
+
+            // let raw = unsafe { bitwuzla_get_bv_value(self.btor.borrow().as_raw(), self.node) };
+            // let cstr = unsafe { CStr::from_ptr(raw) };
+            // let string = cstr.to_str().unwrap().to_owned();
+            // Some(string)
+            unsafe {
+                let tmpfile: *mut libc::FILE = libc::tmpfile();
+                assert!(!tmpfile.is_null());
+                let format = CString::new("smt2").unwrap();
+                // Write the data to `tmpfile`
+                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+                // Seek to the end of `tmpfile`
+                assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
+                // Get the length of `tmpfile`
+                let length = libc::ftell(tmpfile);
+                assert!(length >= 0);
+                // Seek back to the beginning of `tmpfile`
+                assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_SET), 0);
+                let mut buffer = Vec::with_capacity(length as usize);
+                libc::fread(
+                    buffer.as_mut_ptr() as *mut c_void,
+                    1,
+                    length as usize,
+                    tmpfile,
+                );
+                buffer.set_len(length as usize);
+                let string = String::from_utf8_unchecked(buffer);
+                libc::fclose(tmpfile);
+                assert!(string.starts_with("#b"));
+                let string = string[2 ..].to_string();
+                Some(string)
+            }
         } else {
             None
         }
@@ -343,7 +392,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
@@ -402,24 +451,24 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     pub fn get_a_solution(&self) -> BVSolution {
         let btor = self.btor.borrow();
         use crate::option::{BtorOption, NumberFormat};
-        // Workaround for https://github.com/Boolector/boolector/issues/79:
+        // Workaround for https://github.com/boolector/boolector/issues/79:
         // set OUTPUT_NUMBER_FORMAT to binary just for this call, restore old
         // value on method exit
         let old_output_format =
-            unsafe { boolector_get_opt(btor.as_raw(), BTOR_OPT_OUTPUT_NUMBER_FORMAT) };
+            unsafe { bitwuzla_get_option(btor.as_raw(), BITWUZLA_OPT_OUTPUT_NUMBER_FORMAT) };
         btor.set_opt(BtorOption::OutputNumberFormat(NumberFormat::Binary));
 
         btor.timeout_state.restart_timer();
 
-        let solution = BVSolution::from_raw(btor, unsafe {
-            boolector_bv_assignment(self.btor.borrow().as_raw(), self.node)
+        let solution = BVSolution::from_raw(unsafe {
+            bitwuzla_get_bv_value(self.btor.borrow().as_raw(), self.node)
         });
 
         // restore the old value of the OUTPUT_NUMBER_FORMAT setting
         unsafe {
-            boolector_set_opt(
+            bitwuzla_set_option(
                 btor.as_raw(),
-                BTOR_OPT_OUTPUT_NUMBER_FORMAT,
+                BITWUZLA_OPT_OUTPUT_NUMBER_FORMAT,
                 old_output_format,
             )
         };
@@ -434,17 +483,18 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
 
     /// Get the id of the `BV`
     pub fn get_id(&self) -> i32 {
-        unsafe { boolector_get_node_id(self.btor.borrow().as_raw(), self.node) }
+        todo!()
+        // unsafe { bitwuzla_get_node_id(self.btor.borrow().as_raw(), self.node) }
     }
 
     /// Get the bitwidth of the `BV`
     pub fn get_width(&self) -> u32 {
-        unsafe { boolector_get_width(self.btor.borrow().as_raw(), self.node) }
+        unsafe { bitwuzla_term_bv_get_size(self.node) }
     }
 
     /// Get the symbol of the `BV`, if one was assigned
     pub fn get_symbol(&self) -> Option<&str> {
-        let raw = unsafe { boolector_get_symbol(self.btor.borrow().as_raw(), self.node) };
+        let raw = unsafe { bitwuzla_term_get_symbol(self.node) };
         if raw.is_null() {
             None
         } else {
@@ -457,13 +507,11 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// [`BV::new()`](struct.BV.html#method.new).
     pub fn set_symbol(&mut self, symbol: Option<&str>) {
         match symbol {
-            None => unsafe {
-                boolector_set_symbol(self.btor.borrow().as_raw(), self.node, std::ptr::null())
-            },
+            None => unsafe { bitwuzla_term_set_symbol(self.node, std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { boolector_set_symbol(self.btor.borrow().as_raw(), self.node, symbol) }
+                unsafe { bitwuzla_term_set_symbol(self.node, symbol) }
             },
         }
     }
@@ -473,7 +521,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Examples
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
@@ -494,12 +542,12 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// assert!(sum.is_const());
     /// ```
     pub fn is_const(&self) -> bool {
-        unsafe { boolector_is_const(self.btor.borrow().as_raw(), self.node) }
+        unsafe { bitwuzla_term_is_value(self.node) }
     }
 
     /// Does `self` have the same width as `other`?
     pub fn has_same_width(&self, other: &Self) -> bool {
-        unsafe { boolector_is_equal_sort(self.btor.borrow().as_raw(), self.node, other.node) }
+        unsafe { bitwuzla_term_is_equal_sort(self.node, other.node) }
     }
 
     /// Assert that `self == 1`.
@@ -509,8 +557,8 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::Incremental(true));
@@ -538,7 +586,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// assert_eq!(btor.sat(), SolverResult::Unsat);
     /// ```
     pub fn assert(&self) {
-        unsafe { boolector_assert(self.btor.borrow().as_raw(), self.node) }
+        unsafe { bitwuzla_assert(self.btor.borrow().as_raw(), self.node) }
     }
 
     /// Assume that the given node == 1.
@@ -551,11 +599,12 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::Incremental(true));
+    /// std::thread::sleep(std::time::Duration::from_secs(2));
     ///
     /// // Create an unconstrained `BV`
     /// let bv = BV::new(btor.clone(), 8, Some("foo"));
@@ -577,7 +626,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// ```
     pub fn assume(&self) {
-        unsafe { boolector_assume(self.btor.borrow().as_raw(), self.node) }
+        unsafe { bitwuzla_assume(self.btor.borrow().as_raw(), self.node) }
     }
 
     /// Returns true if this node is an assumption that forced the input formula
@@ -586,8 +635,8 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::Incremental(true));
@@ -608,104 +657,104 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// assert!(assumption.is_failed_assumption());
     /// ```
     pub fn is_failed_assumption(&self) -> bool {
-        unsafe { boolector_failed(self.btor.borrow().as_raw(), self.node) }
+        unsafe { bitwuzla_is_unsat_assumption(self.btor.borrow().as_raw(), self.node) }
     }
 
     binop!(
         /// Bitvector equality. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => _eq, boolector_eq
+        => _eq, BITWUZLA_KIND_EQUAL
     );
     binop!(
         /// Bitvector inequality. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => _ne, boolector_ne
+        => _ne, BITWUZLA_KIND_DISTINCT
     );
 
     binop!(
         /// Bitvector addition. `self` and `other` must have the same bitwidth.
-        => add, boolector_add
+        => add, BITWUZLA_KIND_BV_ADD
     );
     binop!(
         /// Bitvector subtraction. `self` and `other` must have the same bitwidth.
-        => sub, boolector_sub
+        => sub, BITWUZLA_KIND_BV_SUB
     );
     binop!(
         /// Bitvector multiplication. `self` and `other` must have the same bitwidth.
-        => mul, boolector_mul
+        => mul, BITWUZLA_KIND_BV_MUL
     );
     binop!(
         /// Unsigned division. `self` and `other` must have the same bitwidth.
         /// Division by `0` produces `-1`.
-        => udiv, boolector_udiv
+        => udiv, BITWUZLA_KIND_BV_UDIV
     );
     binop!(
         /// Signed division. `self` and `other` must have the same bitwidth.
-        => sdiv, boolector_sdiv
+        => sdiv, BITWUZLA_KIND_BV_SDIV
     );
     binop!(
         /// Unsigned remainder. `self` and `other` must have the same bitwidth.
         /// If `other` is `0`, the result will be `self`.
-        => urem, boolector_urem
+        => urem, BITWUZLA_KIND_BV_UREM
     );
     binop!(
         /// Signed remainder. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have positive sign.
-        => srem, boolector_srem
+        => srem, BITWUZLA_KIND_BV_SREM
     );
     binop!(
         /// Signed remainder. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have sign matching the divisor.
-        => smod, boolector_smod
+        => smod, BITWUZLA_KIND_BV_SMOD
     );
     unop!(
         /// Increment operation
-        => inc, boolector_inc
+        => inc, BITWUZLA_KIND_BV_INC
     );
     unop!(
         /// Decrement operation
-        => dec, boolector_dec
+        => dec, BITWUZLA_KIND_BV_DEC
     );
     unop!(
         /// Two's complement negation
-        => neg, boolector_neg
+        => neg, BITWUZLA_KIND_BV_NEG
     );
 
     binop!(
         /// Unsigned addition overflow detection. Resulting `BV` will have bitwidth
         /// one, and be `true` if adding `self` and `other` would overflow when
         /// interpreting both `self` and `other` as unsigned.
-        => uaddo, boolector_uaddo
+        => uaddo, BITWUZLA_KIND_BV_UADD_OVERFLOW
     );
     binop!(
         /// Signed addition overflow detection. Resulting `BV` will have bitwidth
         /// one, and be `true` if adding `self` and `other` would overflow when
         /// interpreting both `self` and `other` as signed.
-        => saddo, boolector_saddo
+        => saddo, BITWUZLA_KIND_BV_SADD_OVERFLOW
     );
     binop!(
         /// Unsigned subtraction overflow detection. Resulting `BV` will have bitwidth
         /// one, and be `true` if subtracting `self` and `other` would overflow when
         /// interpreting both `self` and `other` as unsigned.
-        => usubo, boolector_usubo
+        => usubo, BITWUZLA_KIND_BV_USUB_OVERFLOW
     );
     binop!(
         /// Signed subtraction overflow detection. Resulting `BV` will have bitwidth
         /// one, and be `true` if subtracting `self` and `other` would overflow when
         /// interpreting both `self` and `other` as signed.
-        => ssubo, boolector_ssubo
+        => ssubo, BITWUZLA_KIND_BV_SSUB_OVERFLOW
     );
     binop!(
         /// Unsigned multiplication overflow detection. Resulting `BV` will have
         /// bitwidth 1, and be `true` if multiplying `self` and `other` would
         /// overflow when interpreting both `self` and `other` as unsigned.
-        => umulo, boolector_umulo
+        => umulo, BITWUZLA_KIND_BV_UMUL_OVERFLOW
     );
     binop!(
         /// Signed multiplication overflow detection. Resulting `BV` will have
         /// bitwidth 1, and be `true` if multiplying `self` and `other` would
         /// overflow when interpreting both `self` and `other` as signed.
-        => smulo, boolector_smulo
+        => smulo, BITWUZLA_KIND_BV_SMUL_OVERFLOW
     );
     binop!(
         /// Signed division overflow detection. Resulting `BV` will have bitwidth
@@ -714,36 +763,36 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         ///
         /// Signed division can overflow if `self` is `INT_MIN` and `other` is `-1`.
         /// Note that unsigned division cannot overflow.
-        => sdivo, boolector_sdivo
+        => sdivo, BITWUZLA_KIND_BV_SDIV_OVERFLOW
     );
 
     unop!(
         /// Bitwise `not` operation (one's complement)
-        => not, boolector_not
+        => not, BITWUZLA_KIND_BV_NOT
     );
     binop!(
         /// Bitwise `and` operation. `self` and `other` must have the same bitwidth.
-        => and, boolector_and
+        => and, BITWUZLA_KIND_BV_AND
     );
     binop!(
         /// Bitwise `or` operation. `self` and `other` must have the same bitwidth.
-        => or, boolector_or
+        => or, BITWUZLA_KIND_BV_OR
     );
     binop!(
         /// Bitwise `xor` operation. `self` and `other` must have the same bitwidth.
-        => xor, boolector_xor
+        => xor, BITWUZLA_KIND_BV_XOR
     );
     binop!(
         /// Bitwise `nand` operation. `self` and `other` must have the same bitwidth.
-        => nand, boolector_nand
+        => nand, BITWUZLA_KIND_BV_NAND
     );
     binop!(
         /// Bitwise `nor` operation. `self` and `other` must have the same bitwidth.
-        => nor, boolector_nor
+        => nor, BITWUZLA_KIND_BV_NOR
     );
     binop!(
         /// Bitwise `xnor` operation. `self` and `other` must have the same bitwidth.
-        => xnor, boolector_xnor
+        => xnor, BITWUZLA_KIND_BV_XNOR
     );
 
     binop!(
@@ -753,7 +802,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// be log2 of the bitwidth of `self`.
         ///
         /// Resulting `BV` will have the same bitwidth as `self`.
-        => sll, boolector_sll
+        => sll, BITWUZLA_KIND_BV_SHL
     );
     binop!(
         /// Logical shift right: shift `self` right by `other` bits.
@@ -762,7 +811,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// be log2 of the bitwidth of `self`.
         ///
         /// Resulting `BV` will have the same bitwidth as `self`.
-        => srl, boolector_srl
+        => srl, BITWUZLA_KIND_BV_SHR
     );
     binop!(
         /// Arithmetic shift right: shift `self` right by `other` bits.
@@ -771,7 +820,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// be log2 of the bitwidth of `self`.
         ///
         /// Resulting `BV` will have the same bitwidth as `self`.
-        => sra, boolector_sra
+        => sra, BITWUZLA_KIND_BV_ASHR
     );
     binop!(
         /// Rotate `self` left by `other` bits.
@@ -779,7 +828,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// `other` must be log2 of the bitwidth of `self`.
         ///
         /// Resulting `BV` will have the same bitwidth as `self`.
-        => rol, boolector_rol
+        => rol, BITWUZLA_KIND_BV_ROL
     );
     binop!(
         /// Rotate `self` right by `other` bits.
@@ -787,64 +836,64 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// `other` must be log2 of the bitwidth of `self`.
         ///
         /// Resulting `BV` will have the same bitwidth as `self`.
-        => ror, boolector_ror
+        => ror, BITWUZLA_KIND_BV_ROR
     );
 
     unop!(
         /// `and` reduction operation: take the Boolean `and` of all bits in the `BV`.
         /// Resulting `BV` will have bitwidth 1.
-        => redand, boolector_redand
+        => redand, BITWUZLA_KIND_BV_REDAND
     );
     unop!(
         /// `or` reduction operation: take the Boolean `or` of all bits in the `BV`.
         /// Resulting `BV` will have bitwidth 1.
-        => redor, boolector_redor
+        => redor, BITWUZLA_KIND_BV_REDOR
     );
     unop!(
         /// `xor` reduction operation: take the Boolean `xor` of all bits in the `BV`.
         /// Resulting `BV` will have bitwidth 1.
-        => redxor, boolector_redxor
+        => redxor, BITWUZLA_KIND_BV_REDXOR
     );
 
     binop!(
         /// Unsigned greater than. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => ugt, boolector_ugt
+        => ugt, BITWUZLA_KIND_BV_UGT
     );
     binop!(
         /// Unsigned greater than or equal. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => ugte, boolector_ugte
+        => ugte, BITWUZLA_KIND_BV_UGE
     );
     binop!(
         /// Signed greater than. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => sgt, boolector_sgt
+        => sgt, BITWUZLA_KIND_BV_SGT
     );
     binop!(
         /// Signed greater than or equal. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => sgte, boolector_sgte
+        => sgte, BITWUZLA_KIND_BV_SGE
     );
     binop!(
         /// Unsigned less than. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => ult, boolector_ult
+        => ult, BITWUZLA_KIND_BV_ULT
     );
     binop!(
         /// Unsigned less than or equal. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => ulte, boolector_ulte
+        => ulte, BITWUZLA_KIND_BV_ULE
     );
     binop!(
         /// Signed less than. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => slt, boolector_slt
+        => slt, BITWUZLA_KIND_BV_SLT
     );
     binop!(
         /// Signed less than or equal. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => slte, boolector_slte
+        => slte, BITWUZLA_KIND_BV_SLE
     );
 
     /// Unsigned extension (zero-extension), extending by `n` bits. Resulting
@@ -853,9 +902,11 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
+    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
     ///
     /// // Create an 8-bit `BV` with value `3`
     /// let bv = BV::from_u32(btor.clone(), 3, 8);
@@ -870,7 +921,14 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     pub fn uext(&self, n: u32) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe { boolector_uext(self.btor.borrow().as_raw(), self.node, n) },
+            node: unsafe {
+                bitwuzla_mk_term1_indexed1(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_BV_ZERO_EXTEND,
+                    self.node,
+                    n,
+                )
+            },
         }
     }
 
@@ -880,7 +938,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
@@ -897,7 +955,14 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     pub fn sext(&self, n: u32) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe { boolector_sext(self.btor.borrow().as_raw(), self.node, n) },
+            node: unsafe {
+                bitwuzla_mk_term1_indexed1(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_BV_SIGN_EXTEND,
+                    self.node,
+                    n,
+                )
+            },
         }
     }
 
@@ -909,7 +974,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV};
+    /// # use bitwuzla::{Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
@@ -923,11 +988,29 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// assert_eq!(slice.get_width(), 4);
     /// assert_eq!(slice.as_binary_str().unwrap(), "0010");
     pub fn slice(&self, high: u32, low: u32) -> Self {
-        assert!(low <= high, "slice: low must be <= high; got low = {}, high = {}", low, high);
-        assert!(high < self.get_width(), "slice: high must be < width; got high = {}, width = {}", high, self.get_width());
+        assert!(
+            low <= high,
+            "slice: low must be <= high; got low = {}, high = {}",
+            low,
+            high
+        );
+        assert!(
+            high < self.get_width(),
+            "slice: high must be < width; got high = {}, width = {}",
+            high,
+            self.get_width()
+        );
         Self {
             btor: self.btor.clone(),
-            node: unsafe { boolector_slice(self.btor.borrow().as_raw(), self.node, high, low) },
+            node: unsafe {
+                bitwuzla_mk_term1_indexed2(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_BV_EXTRACT,
+                    self.node,
+                    high,
+                    low,
+                )
+            },
         }
     }
 
@@ -937,7 +1020,7 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// # Example
         ///
         /// ```
-        /// # use boolector::{Btor, BV};
+        /// # use bitwuzla::{Btor, BV};
         /// # use std::rc::Rc;
         /// let btor = Rc::new(Btor::new());
         ///
@@ -957,26 +1040,33 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
         /// assert_eq!(result.get_width(), 16);
         /// assert_eq!(result.as_binary_str().unwrap(), "0000000111111111");
         /// ```
-        => concat, boolector_concat
+        => concat, BITWUZLA_KIND_BV_CONCAT
     );
 
     /// Concatenate the `BV` with itself `n` times
     pub fn repeat(&self, n: u32) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe { boolector_repeat(self.btor.borrow().as_raw(), self.node, n) },
+            node: unsafe {
+                bitwuzla_mk_term1_indexed1(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_BV_REPEAT,
+                    self.node,
+                    n,
+                )
+            },
         }
     }
 
     binop!(
         /// Returns the `BV` which is true if `self <=> other`, else false.
         /// `self` and `other` must have bitwidth 1.
-        => iff, boolector_iff
+        => iff, BITWUZLA_KIND_IFF
     );
     binop!(
         /// Returns the `BV` which is true if `self` implies `other`, else false.
         /// `self` and `other` must have bitwidth 1.
-        => implies, boolector_implies
+        => implies, BITWUZLA_KIND_IMPLIES
     );
 
     /// Create an if-then-else `BV` node.
@@ -987,8 +1077,8 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
@@ -1012,12 +1102,18 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     /// assert_eq!(y.get_a_solution().as_u64().unwrap(), 1);
     /// ```
     pub fn cond_bv(&self, truebv: &Self, falsebv: &Self) -> Self {
-        assert_eq!(self.get_width(), 1, "cond_bv: self must have bitwidth 1; got {}", self.get_width());
+        assert_eq!(
+            self.get_width(),
+            1,
+            "cond_bv: self must have bitwidth 1; got {}",
+            self.get_width()
+        );
         Self {
             btor: self.btor.clone(),
             node: unsafe {
-                boolector_cond(
+                bitwuzla_mk_term3(
                     self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_ITE,
                     self.node,
                     truebv.node,
                     falsebv.node,
@@ -1031,12 +1127,18 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     ///
     /// `self` must have bitwidth 1.
     pub fn cond_array(&self, true_array: &Array<R>, false_array: &Array<R>) -> Array<R> {
-        assert_eq!(self.get_width(), 1, "cond_array: self must have bitwidth 1; got {}", self.get_width());
+        assert_eq!(
+            self.get_width(),
+            1,
+            "cond_array: self must have bitwidth 1; got {}",
+            self.get_width()
+        );
         Array {
             btor: self.btor.clone(),
             node: unsafe {
-                boolector_cond(
+                bitwuzla_mk_term3(
                     self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_ITE,
                     self.node,
                     true_array.node,
                     false_array.node,
@@ -1046,26 +1148,29 @@ impl<R: Borrow<Btor> + Clone> BV<R> {
     }
 }
 
-impl<R: Borrow<Btor> + Clone> Clone for BV<R> {
+impl<R: Borrow<Bitwuzla> + Clone> Clone for BV<R> {
     fn clone(&self) -> Self {
         Self {
             btor: self.btor.clone(),
+            /*
             node: unsafe {
-                boolector_copy(self.btor.borrow().as_raw(), self.node) // not an actual copy, just incrementing the refcount properly
+                bitwuzla_copy(self.btor.borrow().as_raw(), self.node) // not an actual copy, just incrementing the refcount properly
             },
+            */
+            node: self.node,
         }
     }
 }
 
-impl<R: Borrow<Btor> + Clone> Drop for BV<R> {
+impl<R: Borrow<Bitwuzla> + Clone> Drop for BV<R> {
     fn drop(&mut self) {
-        // Actually releasing here seems to expose some UAF bugs in Boolector
+        // Actually releasing here seems to expose some UAF bugs in boolector
         // Instead, we just rely on release_all when dropping the Btor
-        // unsafe { boolector_release(self.btor.borrow().as_raw(), self.node) }
+        // unsafe { bitwuzla_release(self.btor.borrow().as_raw(), self.node) }
     }
 }
 
-impl<R: Borrow<Btor> + Clone> fmt::Debug for BV<R> {
+impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for BV<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         const MAX_LENGTH: i64 = 2000; // If the text representation of the `BV` exceeds this length, subsitute a placeholder instead
         unsafe {
@@ -1073,8 +1178,9 @@ impl<R: Borrow<Btor> + Clone> fmt::Debug for BV<R> {
             if tmpfile.is_null() {
                 panic!("Failed to create a temp file");
             }
+            let format = CString::new("smt2").unwrap();
             // Write the data to `tmpfile`
-            boolector_dump_smt2_node(self.btor.borrow().as_raw(), tmpfile, self.node);
+            bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
             // Seek to the end of `tmpfile`
             assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
             // Get the length of `tmpfile`
@@ -1104,27 +1210,27 @@ impl<R: Borrow<Btor> + Clone> fmt::Debug for BV<R> {
     }
 }
 
-/// An `Array` in Boolector is really just a map from `BV`s to `BV`s.
+/// An `Array` in bitwuzla is really just a map from `BV`s to `BV`s.
 ///
 /// Like `BV`, `Array` is generic in the `Btor` reference type.
 /// For instance, you could use `Array<Rc<Btor>>` for single-threaded applications,
 /// or `Array<Arc<Btor>>` for multi-threaded applications.
 #[derive(PartialEq, Eq)]
-pub struct Array<R: Borrow<Btor> + Clone> {
+pub struct Array<R: Borrow<Bitwuzla> + Clone> {
     pub(crate) btor: R,
-    pub(crate) node: *mut BoolectorNode,
+    pub(crate) node: *const BitwuzlaTerm,
 }
 
 // According to
-// https://groups.google.com/forum/#!msg/boolector/itYGgJxU3mY/AC2O0898BAAJ,
-// the Boolector library is thread-safe, meaning `*mut BoolectorNode` can be
+// https://groups.google.com/forum/#!msg/bitwuzla/itYGgJxU3mY/AC2O0898BAAJ,
+// the bitwuzla library is thread-safe, meaning `*mut BitwuzlaTerm` can be
 // both `Send` and `Sync`.
 // So as long as `R` is `Send` and/or `Sync`, we can mark `Array` as `Send`
 // and/or `Sync` respectively.
-unsafe impl<R: Borrow<Btor> + Clone + Send> Send for Array<R> {}
-unsafe impl<R: Borrow<Btor> + Clone + Sync> Sync for Array<R> {}
+unsafe impl<R: Borrow<Bitwuzla> + Clone + Send> Send for Array<R> {}
+unsafe impl<R: Borrow<Bitwuzla> + Clone + Sync> Sync for Array<R> {}
 
-impl<R: Borrow<Btor> + Clone> Array<R> {
+impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// Create a new `Array` which maps `BV`s of width `index_width` to `BV`s of
     /// width `element_width`. All values in the `Array` will be unconstrained.
     ///
@@ -1136,7 +1242,7 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Array, Btor, BV};
+    /// # use bitwuzla::{Array, Btor, BV};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
@@ -1155,12 +1261,14 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
     /// assert_eq!(read_bv.as_u64().unwrap(), 3);
     /// ```
     pub fn new(btor: R, index_width: u32, element_width: u32, symbol: Option<&str>) -> Self {
+        todo!()
+        /*
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
         let node = match symbol {
             None => unsafe {
-                boolector_array(
+                bitwuzla_array(
                     btor.borrow().as_raw(),
                     array_sort.as_raw(),
                     std::ptr::null(),
@@ -1169,10 +1277,11 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { boolector_array(btor.borrow().as_raw(), array_sort.as_raw(), symbol) }
+                unsafe { bitwuzla_array(btor.borrow().as_raw(), array_sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
+        */
     }
 
     /// Create a new `Array` which maps `BV`s of width `index_width` to `BV`s of
@@ -1184,8 +1293,8 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Array, Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Array, Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
@@ -1219,24 +1328,32 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
-        let node =
-            unsafe { boolector_const_array(btor.borrow().as_raw(), array_sort.as_raw(), val.node) };
+        let node = unsafe {
+            bitwuzla_mk_const_array(btor.borrow().as_raw(), array_sort.as_raw(), val.node)
+        };
         Self { btor, node }
     }
 
     /// Get the bitwidth of the index type of the `Array`
     pub fn get_index_width(&self) -> u32 {
-        unsafe { boolector_get_index_width(self.btor.borrow().as_raw(), self.node) }
+        unsafe {
+            let sort = bitwuzla_term_array_get_index_sort(self.node);
+            // TODO: do we know if the sort is actually a bv?
+            bitwuzla_sort_bv_get_size(sort)
+        }
     }
 
     /// Get the bitwidth of the element type of the `Array`
     pub fn get_element_width(&self) -> u32 {
-        unsafe { boolector_get_width(self.btor.borrow().as_raw(), self.node) }
+        unsafe {
+            let sort = bitwuzla_term_array_get_element_sort(self.node);
+            bitwuzla_sort_bv_get_size(sort)
+        }
     }
 
     /// Get the symbol of the `Array`, if one was assigned
     pub fn get_symbol(&self) -> Option<&str> {
-        let raw = unsafe { boolector_get_symbol(self.btor.borrow().as_raw(), self.node) };
+        let raw = unsafe { bitwuzla_term_get_symbol(self.node) };
         if raw.is_null() {
             None
         } else {
@@ -1247,28 +1364,35 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
 
     /// Does the `Array` have a constant value?
     pub fn is_const(&self) -> bool {
-        unsafe { boolector_is_const(self.btor.borrow().as_raw(), self.node) }
+        unsafe { bitwuzla_term_is_const(self.node) }
     }
 
     /// Does `self` have the same index and element widths as `other`?
     pub fn has_same_widths(&self, other: &Self) -> bool {
-        unsafe { boolector_is_equal_sort(self.btor.borrow().as_raw(), self.node, other.node) }
+        unsafe { bitwuzla_term_is_equal_sort(self.node, other.node) }
     }
 
     binop!(
         /// Array equality. `self` and `other` must have the same index and element widths.
-        => _eq, boolector_eq
+        => _eq, BITWUZLA_KIND_EQUAL
     );
     binop!(
         /// Array inequality. `self` and `other` must have the same index and element widths.
-        => _ne, boolector_ne
+        => _ne, BITWUZLA_KIND_DISTINCT
     );
 
     /// Array read: get the value in the `Array` at the given `index`
     pub fn read(&self, index: &BV<R>) -> BV<R> {
         BV {
             btor: self.btor.clone(),
-            node: unsafe { boolector_read(self.btor.borrow().as_raw(), self.node, index.node) },
+            node: unsafe {
+                bitwuzla_mk_term2(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_ARRAY_SELECT,
+                    self.node,
+                    index.node,
+                )
+            },
         }
     }
 
@@ -1278,8 +1402,9 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
         Self {
             btor: self.btor.clone(),
             node: unsafe {
-                boolector_write(
+                bitwuzla_mk_term3(
                     self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_ARRAY_STORE,
                     self.node,
                     index.node,
                     value.node,
@@ -1289,26 +1414,27 @@ impl<R: Borrow<Btor> + Clone> Array<R> {
     }
 }
 
-impl<R: Borrow<Btor> + Clone> Clone for Array<R> {
+impl<R: Borrow<Bitwuzla> + Clone> Clone for Array<R> {
     fn clone(&self) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe {
-                boolector_copy(self.btor.borrow().as_raw(), self.node) // not an actual copy, just incrementing the refcount properly
-            },
+            node: self.node,
+            // node: unsafe {
+            //     bitwuzla_copy(self.btor.borrow().as_raw(), self.node) // not an actual copy, just incrementing the refcount properly
+            // },
         }
     }
 }
 
-impl<R: Borrow<Btor> + Clone> Drop for Array<R> {
+impl<R: Borrow<Bitwuzla> + Clone> Drop for Array<R> {
     fn drop(&mut self) {
-        // Actually releasing here seems to expose some UAF bugs in Boolector
+        // Actually releasing here seems to expose some UAF bugs in bitwuzla
         // Instead, we just rely on release_all when dropping the Btor
-        // unsafe { boolector_release(self.btor.borrow().as_raw(), self.node) }
+        // unsafe { bitwuzla_release(self.btor.borrow().as_raw(), self.node) }
     }
 }
 
-impl<R: Borrow<Btor> + Clone> fmt::Debug for Array<R> {
+impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for Array<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         const MAX_LENGTH: i64 = 2000; // If the text representation of the `Array` exceeds this length, subsitute a placeholder instead
         unsafe {
@@ -1316,8 +1442,9 @@ impl<R: Borrow<Btor> + Clone> fmt::Debug for Array<R> {
             if tmpfile.is_null() {
                 panic!("Failed to create a temp file");
             }
+            let format = CString::new("smt2").unwrap();
             // Write the data to `tmpfile`
-            boolector_dump_smt2_node(self.btor.borrow().as_raw(), tmpfile, self.node);
+            bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
             // Seek to the end of `tmpfile`
             assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
             // Get the length of `tmpfile`
@@ -1356,16 +1483,12 @@ pub struct BVSolution {
 impl BVSolution {
     /// expects an `assignment` in _binary_ (01x) format
     ///
-    /// relevant: https://github.com/Boolector/boolector/issues/79
-    fn from_raw(btor: &Btor, assignment: *const c_char) -> Self {
+    /// relevant: https://github.com/boolector/boolector/issues/79
+    fn from_raw(assignment: *const c_char) -> Self {
         Self {
             assignment: {
                 let cstr = unsafe { CStr::from_ptr(assignment) };
-                let assign = cstr.to_str().unwrap().to_owned();
-                unsafe {
-                    boolector_free_bv_assignment(btor.as_raw(), cstr.as_ptr() as *const c_char)
-                };
-                assign
+                cstr.to_str().unwrap().to_owned()
             },
         }
     }
@@ -1378,8 +1501,8 @@ impl BVSolution {
     /// # Example
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));

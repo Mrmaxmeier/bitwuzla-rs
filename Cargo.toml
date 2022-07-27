@@ -1,18 +1,19 @@
 [package]
-name = "boolector"
-version = "0.4.3"
+name = "bitwuzla"
+version = "0.1.0"
 authors = ["Craig Disselkoen <craigdissel@gmail.com>"]
 edition = "2018"
-description = "Safe high-level bindings for the Boolector SMT solver"
-documentation = "https://docs.rs/boolector"
-repository = "https://github.com/cdisselkoen/boolector-rs"
+description = "Safe high-level bindings for the Bitwuzla SMT solver"
+# documentation = "https://docs.rs/bitwuzla"
+# repository = "https://github.com/cdisselkoen/bitwuzla-rs"
 readme = "README.md"
-keywords = ["boolector", "smt", "ffi", "bindings"]
+keywords = ["bitwuzla", "smt", "ffi", "bindings"]
 license = "MIT"
 
 [dependencies]
-boolector-sys = "0.7.1"
+bitwuzla-sys = "0.2.0"
+# bitwuzla-sys = { path = "../bitwuzla-sys" }
 libc = "0.2.73"
 
 [features]
-vendor-lgl = ["boolector-sys/vendor-lgl"]
+vendor-cadical = ["bitwuzla-sys/vendor-cadical"]

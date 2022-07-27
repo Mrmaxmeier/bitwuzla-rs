@@ -2,54 +2,55 @@ use crate::node::{Array, BV};
 use crate::option::BtorOption;
 use crate::option::*;
 use crate::timeout::{self, TimeoutState};
-use boolector_sys::*;
+use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::{c_char, c_void};
 use std::pin::Pin;
 
-/// A `Btor` represents an instance of the Boolector solver.
+/// A `Btor` represents an instance of the bitwuzla solver.
 /// Each `BV` and `Array` is created in a particular `Btor` instance.
-pub struct Btor {
-    btor: *mut boolector_sys::Btor,
-    pub(crate) timeout_state: Pin<Box<timeout::TimeoutState>>, // needs to be `Pin`, because the Boolector callback will expect to continue to find the `TimeoutState` at the same location
+pub struct Bitwuzla {
+    btor: *mut bitwuzla_sys::Bitwuzla,
+    pub(crate) timeout_state: Pin<Box<timeout::TimeoutState>>, // needs to be `Pin`, because the bitwuzla callback will expect to continue to find the `TimeoutState` at the same location
 }
+pub type Btor = Bitwuzla;
 
 // Two `Btor`s are equal if they have the same underlying Btor pointer.
 // We disregard the `timeout_state` for this purpose.
-impl PartialEq for Btor {
+impl PartialEq for Bitwuzla {
     fn eq(&self, other: &Self) -> bool {
         self.btor == other.btor
     }
 }
 
-impl Eq for Btor {}
+impl Eq for Bitwuzla {}
 
-impl fmt::Debug for Btor {
+impl fmt::Debug for Bitwuzla {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<btor {:?}>", self.btor)
+        write!(f, "<bitwuzla {:?}>", self.btor)
     }
 }
 
 /// According to
-/// https://groups.google.com/forum/#!msg/boolector/itYGgJxU3mY/AC2O0898BAAJ,
-/// the Boolector library is thread-safe, so we make `Btor` both `Send` and
+/// https://groups.google.com/forum/#!msg/bitwuzla/itYGgJxU3mY/AC2O0898BAAJ,
+/// the boolector library is thread-safe, so we make `Bitwuzla` both `Send` and
 /// `Sync`. (Note that `TimeoutState` is also careful to be both `Send` and
 /// `Sync`.)
-unsafe impl Send for Btor {}
-unsafe impl Sync for Btor {}
+unsafe impl Send for Bitwuzla {}
+unsafe impl Sync for Bitwuzla {}
 
-impl Btor {
-    /// Create a new `Btor` instance with no variables and no constraints.
+impl Bitwuzla {
+    /// Create a new `Bitwuzla` instance with no variables and no constraints.
     pub fn new() -> Self {
         Self {
-            btor: unsafe { boolector_new() },
+            btor: unsafe { bitwuzla_new() },
             timeout_state: Pin::new(Box::new(timeout::TimeoutState::new())),
         }
     }
 
-    pub(crate) fn as_raw(&self) -> *mut boolector_sys::Btor {
+    pub(crate) fn as_raw(&self) -> *mut bitwuzla_sys::Bitwuzla {
         self.btor
     }
 
@@ -63,51 +64,67 @@ impl Btor {
                     ModelGen::Asserted => 1,
                     ModelGen::All => 2,
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_MODEL_GEN, val) }
+                unsafe { bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PRODUCE_MODELS, val) }
             },
             BtorOption::Incremental(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_INCREMENTAL, if b { 1 } else { 0 })
-            },
-            BtorOption::IncrementalSMT1(ismt1) => {
-                let val = match ismt1 {
-                    IncrementalSMT1::Basic => BTOR_INCREMENTAL_SMT1_BASIC,
-                    IncrementalSMT1::Continue => BTOR_INCREMENTAL_SMT1_CONTINUE,
-                };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_INCREMENTAL_SMT1, val) }
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_INCREMENTAL,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::InputFileFormat(iff) => {
                 let val = match iff {
-                    InputFileFormat::Autodetect => BTOR_INPUT_FORMAT_NONE,
-                    InputFileFormat::Btor => BTOR_INPUT_FORMAT_BTOR,
-                    InputFileFormat::Btor2 => BTOR_INPUT_FORMAT_BTOR2,
-                    InputFileFormat::SMTLIBv1 => BTOR_INPUT_FORMAT_SMT1,
-                    InputFileFormat::SMTLIBv2 => BTOR_INPUT_FORMAT_SMT2,
+                    InputFileFormat::Autodetect => "none",
+                    InputFileFormat::Btor => "btor",
+                    InputFileFormat::Btor2 => "btor2",
+                    InputFileFormat::SMTLIBv1 => "smt1",
+                    InputFileFormat::SMTLIBv2 => "smt2",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_INPUT_FORMAT, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(self.as_raw(), BITWUZLA_OPT_INPUT_FORMAT, val.as_ptr())
+                }
             },
             BtorOption::OutputNumberFormat(nf) => {
                 let val = match nf {
-                    NumberFormat::Binary => BTOR_OUTPUT_BASE_BIN,
-                    NumberFormat::Decimal => BTOR_OUTPUT_BASE_DEC,
-                    NumberFormat::Hexadecimal => BTOR_OUTPUT_BASE_HEX,
+                    NumberFormat::Binary => "bin",
+                    NumberFormat::Decimal => "dec",
+                    NumberFormat::Hexadecimal => "hex",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_OUTPUT_NUMBER_FORMAT, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(
+                        self.as_raw(),
+                        BITWUZLA_OPT_OUTPUT_NUMBER_FORMAT,
+                        val.as_ptr(),
+                    )
+                }
             },
             BtorOption::OutputFileFormat(off) => {
                 let val = match off {
-                    OutputFileFormat::BTOR => BTOR_OUTPUT_FORMAT_BTOR,
-                    OutputFileFormat::SMTLIBv2 => BTOR_OUTPUT_FORMAT_SMT2,
-                    OutputFileFormat::AigerASCII => BTOR_OUTPUT_FORMAT_AIGER_ASCII,
-                    OutputFileFormat::AigerBinary => BTOR_OUTPUT_FORMAT_AIGER_BINARY,
+                    OutputFileFormat::BTOR => "btor",
+                    OutputFileFormat::SMTLIBv2 => "smt2",
+                    OutputFileFormat::AigerASCII => "aiger",
+                    OutputFileFormat::AigerBinary => "aigerbin",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_OUTPUT_FORMAT, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(self.as_raw(), BITWUZLA_OPT_OUTPUT_FORMAT, val.as_ptr())
+                }
             },
             BtorOption::SolverTimeout(duration) => {
                 self.timeout_state.set_timeout_duration(duration);
                 match duration {
                     None => {
                         // remove any existing timeout
-                        unsafe { boolector_set_term(self.as_raw(), None, std::ptr::null_mut()) }
+                        unsafe {
+                            bitwuzla_set_termination_callback(
+                                self.as_raw(),
+                                None,
+                                std::ptr::null_mut(),
+                            )
+                        }
                     },
                     Some(_) => {
                         let ptr_to_ts: Pin<&TimeoutState> = (&self.timeout_state).as_ref();
@@ -115,7 +132,7 @@ impl Btor {
                             Pin::into_inner(ptr_to_ts) as *const TimeoutState;
                         let void_ptr_to_ts: *mut c_void = raw_ptr_to_ts as *mut c_void;
                         unsafe {
-                            boolector_set_term(
+                            bitwuzla_set_termination_callback(
                                 self.as_raw(),
                                 Some(timeout::callback),
                                 void_ptr_to_ts,
@@ -126,31 +143,51 @@ impl Btor {
             },
             BtorOption::SolverEngine(se) => {
                 let val = match se {
-                    SolverEngine::Fun => BTOR_ENGINE_FUN,
-                    SolverEngine::SLS => BTOR_ENGINE_SLS,
-                    SolverEngine::Prop => BTOR_ENGINE_PROP,
-                    SolverEngine::AIGProp => BTOR_ENGINE_AIGPROP,
-                    SolverEngine::Quant => BTOR_ENGINE_QUANT,
+                    SolverEngine::Fun => "fun",
+                    SolverEngine::SLS => "sls",
+                    SolverEngine::Prop => "prop",
+                    SolverEngine::AIGProp => "aigprop",
+                    SolverEngine::Quant => "quant",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_ENGINE, val) }
+                let val = CString::new(val).unwrap();
+                unsafe { bitwuzla_set_option_str(self.as_raw(), BITWUZLA_OPT_ENGINE, val.as_ptr()) }
             },
             BtorOption::SatEngine(se) => {
                 let val = match se {
-                    SatEngine::CaDiCaL => BTOR_SAT_ENGINE_CADICAL,
-                    SatEngine::CMS => BTOR_SAT_ENGINE_CMS,
-                    SatEngine::Lingeling => BTOR_SAT_ENGINE_LINGELING,
-                    SatEngine::MiniSAT => BTOR_SAT_ENGINE_MINISAT,
-                    SatEngine::PicoSAT => BTOR_SAT_ENGINE_PICOSAT,
+                    SatEngine::CaDiCaL => "cadical",
+                    SatEngine::CMS => "cms",
+                    SatEngine::Gimsatul => "gimsatul",
+                    SatEngine::Kissat => "kissat",
+                    SatEngine::Lingeling => "lingeling",
+                    SatEngine::MiniSAT => "minisat",
+                    SatEngine::PicoSAT => "picosat",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_SAT_ENGINE, val) }
-            },
-            BtorOption::AutoCleanup(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_AUTO_CLEANUP, if b { 1 } else { 0 })
+                let target_engine = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(
+                        self.as_raw(),
+                        BITWUZLA_OPT_SAT_ENGINE,
+                        target_engine.as_ptr(),
+                    )
+                }
+                let engine = unsafe {
+                    CStr::from_ptr(bitwuzla_get_option_str(
+                        self.as_raw(),
+                        BITWUZLA_OPT_SAT_ENGINE,
+                    ))
+                };
+                assert_eq!(engine, target_engine.as_c_str());
             },
             BtorOption::PrettyPrint(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PRETTY_PRINT, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_PRETTY_PRINT,
+                    if b { 1 } else { 0 },
+                )
             },
-            BtorOption::Seed(u) => unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_SEED, u) },
+            BtorOption::Seed(u) => unsafe {
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SEED, u)
+            },
             BtorOption::RewriteLevel(rl) => {
                 let val = match rl {
                     RewriteLevel::None => 0,
@@ -158,95 +195,149 @@ impl Btor {
                     RewriteLevel::More => 2,
                     RewriteLevel::Full => 3,
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_REWRITE_LEVEL, val) }
+                unsafe { bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_RW_LEVEL, val) }
             },
             BtorOption::SkeletonPreproc(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SKELETON_PREPROC,
+                    BITWUZLA_OPT_PP_SKELETON_PREPROC,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::Ackermann(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_ACKERMANN, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_PP_ACKERMANN,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::BetaReduce(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_BETA_REDUCE, if b { 1 } else { 0 })
-            },
-            BtorOption::EliminateSlices(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_ELIMINATE_SLICES,
+                    BITWUZLA_OPT_PP_BETA_REDUCE,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::VariableSubst(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_VAR_SUBST, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_PP_VAR_SUBST,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::UnconstrainedOpt(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_UCOPT, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_PP_UNCONSTRAINED_OPTIMIZATION,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::MergeLambdas(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_MERGE_LAMBDAS, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_PP_MERGE_LAMBDAS,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::ExtractLambdas(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_EXTRACT_LAMBDAS,
+                    BITWUZLA_OPT_PP_EXTRACT_LAMBDAS,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::Normalize(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_NORMALIZE, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_RW_NORMALIZE,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::NormalizeAdd(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_NORMALIZE_ADD, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_RW_NORMALIZE_ADD,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::FunPreProp(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_PREPROP, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_FUN_PREPROP,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::FunPreSLS(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_PRESLS, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_FUN_PRESLS,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::FunDualProp(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_DUAL_PROP, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_FUN_DUAL_PROP,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::FunDualPropQsortOrder(dpqo) => {
                 let val = match dpqo {
-                    DualPropQsortOrder::Just => BTOR_DP_QSORT_JUST,
-                    DualPropQsortOrder::Asc => BTOR_DP_QSORT_ASC,
-                    DualPropQsortOrder::Desc => BTOR_DP_QSORT_DESC,
+                    DualPropQsortOrder::Just => "just",
+                    DualPropQsortOrder::Asc => "asc",
+                    DualPropQsortOrder::Desc => "desc",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_DUAL_PROP_QSORT, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(
+                        self.as_raw(),
+                        BITWUZLA_OPT_FUN_DUAL_PROP_QSORT,
+                        val.as_ptr(),
+                    )
+                }
             },
             BtorOption::FunJustification(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_JUST, if b { 1 } else { 0 })
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_FUN_JUST, if b { 1 } else { 0 })
             },
             BtorOption::FunJustificationHeuristic(jh) => {
                 let val = match jh {
-                    JustificationHeuristic::Left => BTOR_JUST_HEUR_BRANCH_LEFT,
-                    JustificationHeuristic::MinApp => BTOR_JUST_HEUR_BRANCH_MIN_APP,
-                    JustificationHeuristic::MinDepth => BTOR_JUST_HEUR_BRANCH_MIN_DEP,
+                    JustificationHeuristic::Left => "left",
+                    JustificationHeuristic::MinApp => "applies",
+                    JustificationHeuristic::MinDepth => "depth",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_JUST_HEURISTIC, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(
+                        self.as_raw(),
+                        BITWUZLA_OPT_FUN_JUST_HEURISTIC,
+                        val.as_ptr(),
+                    )
+                }
             },
             BtorOption::FunLazySynthesize(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_FUN_LAZY_SYNTHESIZE,
+                    BITWUZLA_OPT_FUN_LAZY_SYNTHESIZE,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::FunEagerLemmas(el) => {
                 let val = match el {
-                    EagerLemmas::None => BTOR_FUN_EAGER_LEMMAS_NONE,
-                    EagerLemmas::Conf => BTOR_FUN_EAGER_LEMMAS_CONF,
-                    EagerLemmas::All => BTOR_FUN_EAGER_LEMMAS_ALL,
+                    EagerLemmas::None => "none",
+                    EagerLemmas::Conf => "conf",
+                    EagerLemmas::All => "all",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_FUN_EAGER_LEMMAS, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(
+                        self.as_raw(),
+                        BITWUZLA_OPT_FUN_EAGER_LEMMAS,
+                        val.as_ptr(),
+                    )
+                }
             },
             BtorOption::SLSNumFlips(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_NFLIPS, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SLS_NFLIPS, u)
             },
             BtorOption::SLSMoveStrategy(sms) => {
                 let val = match sms {
@@ -256,191 +347,203 @@ impl Btor {
                     SLSMoveStrategy::BestSameMove => 3,
                     SLSMoveStrategy::AlwaysProp => 4,
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_STRATEGY, val) }
+                unsafe { bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SLS_STRATEGY, val) }
             },
             BtorOption::SLSJustification(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_JUST, if b { 1 } else { 0 })
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SLS_JUST, if b { 1 } else { 0 })
             },
             BtorOption::SLSGroupWiseMoves(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_MOVE_GW, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_SLS_MOVE_GW,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::SLSRangeWiseMoves(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_RANGE,
+                    BITWUZLA_OPT_SLS_MOVE_RANGE,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSSegmentWiseMoves(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_SEGMENT,
+                    BITWUZLA_OPT_SLS_MOVE_SEGMENT,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSRandomWalkMoves(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_RAND_WALK,
+                    BITWUZLA_OPT_SLS_MOVE_RAND_WALK,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSRandomWalkProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_PROB_MOVE_RAND_WALK, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SLS_PROB_MOVE_RAND_WALK, u)
             },
             BtorOption::SLSRandomizeAll(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_RAND_ALL,
+                    BITWUZLA_OPT_SLS_MOVE_RAND_ALL,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSRandomizeRange(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_RAND_RANGE,
+                    BITWUZLA_OPT_SLS_MOVE_RAND_RANGE,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSPropagationMoves(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_MOVE_PROP, if b { 1 } else { 0 })
+                bitwuzla_set_option(
+                    self.as_raw(),
+                    BITWUZLA_OPT_SLS_MOVE_PROP,
+                    if b { 1 } else { 0 },
+                )
             },
             BtorOption::SLSPropagationMovesNumProp(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_MOVE_PROP_N_PROP, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SLS_MOVE_PROP_NPROPS, u)
             },
             BtorOption::SLSPropagationMovesNumRegular(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_SLS_MOVE_PROP_N_SLS, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_SLS_MOVE_PROP_NSLSS, u)
             },
             BtorOption::SLSForceRandomWalks(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_PROP_FORCE_RW,
+                    BITWUZLA_OPT_SLS_MOVE_PROP_FORCE_RW,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSIncMoveTest(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_MOVE_INC_MOVE_TEST,
+                    BITWUZLA_OPT_SLS_MOVE_INC_MOVE_TEST,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSRestarts(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_USE_RESTARTS,
+                    BITWUZLA_OPT_SLS_USE_RESTARTS,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::SLSBanditScheme(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_SLS_USE_BANDIT,
+                    BITWUZLA_OPT_SLS_USE_BANDIT,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::PropNumSteps(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_NPROPS, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_NPROPS, u)
             },
             BtorOption::PropRestarts(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_PROP_USE_RESTARTS,
+                    BITWUZLA_OPT_PROP_USE_RESTARTS,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::PropBanditScheme(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_PROP_USE_BANDIT,
+                    BITWUZLA_OPT_PROP_USE_BANDIT,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::PropPathSelectionMode(pathsel) => {
                 let val = match pathsel {
-                    PropPathSelection::Controlling => BTOR_PROP_PATH_SEL_CONTROLLING,
-                    PropPathSelection::Essential => BTOR_PROP_PATH_SEL_ESSENTIAL,
-                    PropPathSelection::Random => BTOR_PROP_PATH_SEL_RANDOM,
+                    PropPathSelection::Controlling => unimplemented!(),
+                    PropPathSelection::Essential => "essential",
+                    PropPathSelection::Random => "random",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PATH_SEL, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(self.as_raw(), BITWUZLA_OPT_PROP_PATH_SEL, val.as_ptr())
+                }
             },
             BtorOption::PropInvValueProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_USE_INV_VALUE, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_USE_INV_VALUE, u)
             },
             BtorOption::PropFlipConditionProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_FLIP_COND, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_FLIP_COND, u)
             },
             BtorOption::PropFlipConditionProbabilityConstant(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_FLIP_COND_CONST, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_FLIP_COND_CONST, u)
             },
             BtorOption::PropFlipConditionNumPaths(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_FLIP_COND_CONST_NPATHSEL, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_FLIP_COND_CONST_NPATHSEL, u)
             },
             BtorOption::PropFlipConditionProbabilityConstantDelta(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_FLIP_COND_CONST_DELTA, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_FLIP_COND_CONST_DELTA, u)
             },
             BtorOption::PropSliceKeepDCProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_SLICE_KEEP_DC, u)
-            },
-            BtorOption::PropConcatFlipProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_CONC_FLIP, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_SLICE_KEEP_DC, u)
             },
             BtorOption::PropSliceFlipProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_SLICE_FLIP, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_SLICE_FLIP, u)
             },
             BtorOption::PropEqFlipProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_EQ_FLIP, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_EQ_FLIP, u)
             },
             BtorOption::PropAndFlipProbability(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_PROP_PROB_AND_FLIP, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PROP_PROB_AND_FLIP, u)
             },
             BtorOption::AIGPropUseRestarts(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_AIGPROP_USE_RESTARTS,
+                    BITWUZLA_OPT_AIGPROP_USE_RESTARTS,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::AIGPropQuantSynthesis(pqs) => {
                 let val = match pqs {
-                    AIGPropQuantSynthesis::None => BTOR_QUANT_SYNTH_NONE,
-                    AIGPropQuantSynthesis::EL => BTOR_QUANT_SYNTH_EL,
-                    AIGPropQuantSynthesis::ELMC => BTOR_QUANT_SYNTH_ELMC,
-                    AIGPropQuantSynthesis::ELELMC => BTOR_QUANT_SYNTH_EL_ELMC,
-                    AIGPropQuantSynthesis::ELMR => BTOR_QUANT_SYNTH_ELMR,
+                    AIGPropQuantSynthesis::None => "none",
+                    AIGPropQuantSynthesis::EL => "el",
+                    AIGPropQuantSynthesis::ELMC => "elmc",
+                    AIGPropQuantSynthesis::ELELMC => "elelmc",
+                    AIGPropQuantSynthesis::ELMR => "elmr",
                 };
-                unsafe { boolector_set_opt(self.as_raw(), BTOR_OPT_QUANT_SYNTH, val) }
+                let val = CString::new(val).unwrap();
+                unsafe {
+                    bitwuzla_set_option_str(self.as_raw(), BITWUZLA_OPT_QUANT_SYNTH, val.as_ptr())
+                }
             },
             BtorOption::AIGPropQuantDualSolver(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_QUANT_DUAL_SOLVER,
+                    BITWUZLA_OPT_QUANT_DUAL_SOLVER,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::AIGPropQuantSynthLimit(u) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_QUANT_SYNTH_LIMIT, u)
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_QUANT_SYNTH_LIMIT, u)
             },
             BtorOption::AIGPropSynthQI(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_QUANT_SYNTH_QI,
+                    BITWUZLA_OPT_QUANT_SYNTH_QI,
                     if b { 1 } else { 0 },
                 )
             },
             BtorOption::AIGPropQuantDER(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_QUANT_DER, if b { 1 } else { 0 })
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_QUANT_DER, if b { 1 } else { 0 })
             },
             BtorOption::AIGPropQuantCER(b) => unsafe {
-                boolector_set_opt(self.as_raw(), BTOR_OPT_QUANT_CER, if b { 1 } else { 0 })
+                bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_QUANT_CER, if b { 1 } else { 0 })
             },
             BtorOption::AIGPropQuantMiniscope(b) => unsafe {
-                boolector_set_opt(
+                bitwuzla_set_option(
                     self.as_raw(),
-                    BTOR_OPT_QUANT_MINISCOPE,
+                    BITWUZLA_OPT_QUANT_MINISCOPE,
                     if b { 1 } else { 0 },
                 )
             },
+            _ => panic!("unsupported option"),
         }
     }
 
@@ -455,8 +558,8 @@ impl Btor {
     /// once.
     ///
     /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::Incremental(true));
@@ -494,100 +597,22 @@ impl Btor {
     /// ```
     pub fn sat(&self) -> SolverResult {
         self.timeout_state.restart_timer();
-        #[allow(non_upper_case_globals)]
-        match unsafe { boolector_sat(self.as_raw()) } as u32 {
-            BtorSolverResult_BTOR_RESULT_SAT => SolverResult::Sat,
-            BtorSolverResult_BTOR_RESULT_UNSAT => SolverResult::Unsat,
-            BtorSolverResult_BTOR_RESULT_UNKNOWN => SolverResult::Unknown,
-            u => panic!("Unexpected return value from boolector_sat(): {}", u),
+        match unsafe { bitwuzla_check_sat(self.as_raw()) } {
+            BITWUZLA_SAT => SolverResult::Sat,
+            BITWUZLA_UNSAT => SolverResult::Unsat,
+            BITWUZLA_UNKNOWN => SolverResult::Unknown,
+            _ => unreachable!(),
         }
     }
 
     /// Push `n` context levels. `n` must be at least 1.
     pub fn push(&self, n: u32) {
-        unsafe { boolector_push(self.as_raw(), n) }
+        unsafe { bitwuzla_push(self.as_raw(), n) }
     }
 
     /// Pop `n` context levels. `n` must be at least 1.
     pub fn pop(&self, n: u32) {
-        unsafe { boolector_pop(self.as_raw(), n) }
-    }
-
-    /// Duplicate a `Btor` instance. This will copy all variables, assertions,
-    /// etc into the new instance.
-    ///
-    /// Each `BV` or `Array` may only be used with the `Btor` it was originally
-    /// created for. If you have a `BV` for one `Btor` and want to find the
-    /// corresponding `BV` in another `Btor`, use
-    /// [`Btor::get_matching_bv()`](struct.Btor.html#method.get_matching_bv) or
-    /// [`Btor::get_bv_by_symbol()`](struct.Btor.html#method.get_bv_by_symbol).
-    ///
-    /// With [`SatEngine::Lingeling`](option/enum.SatEngine.html), this can be
-    /// called at any time; but with `SatEngine::PicoSAT` or
-    /// `SatEngine::MiniSAT`, this can only be called prior to the first
-    /// `Btor::sat()` call.
-    ///
-    /// The Boolector API docs refer to this operation as "clone", but we use
-    /// `duplicate()` to avoid confusion.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use boolector::{Btor, BV, SolverResult};
-    /// # use boolector::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
-    ///
-    /// // `x` is an 8-bit `BV` less than `42`
-    /// let x = BV::new(btor.clone(), 8, Some("x"));
-    /// x.ult(&BV::from_u32(btor.clone(), 42, 8)).assert();
-    ///
-    /// // `y` is equal to `x + 7`
-    /// let y = x.add(&BV::from_u32(btor.clone(), 7, 8));
-    ///
-    /// // We duplicate the `Btor` instance
-    /// let btor_2 = Rc::new(btor.duplicate());
-    ///
-    /// // The duplicated instance has copied versions of
-    /// // `x` and `y` which are distinct from the original
-    /// // `x` and `y` but still have the corresponding
-    /// // relationship (i.e., `y_2 = x_2 + 7`)
-    /// let x_2 = Btor::get_matching_bv(btor_2.clone(), &x).unwrap();
-    /// let y_2 = Btor::get_matching_bv(btor_2.clone(), &y).unwrap();
-    ///
-    /// // The instances are totally independent now. In the
-    /// // original instance, we'll assert that `x > 3`, while
-    /// // in the new instance, we'll assert that `x < 3`.
-    /// // Note that we're careful to create constants with the
-    /// // correct `Btor` instance.
-    /// x.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
-    /// x_2.ult(&BV::from_u32(btor_2.clone(), 3, 8)).assert();
-    ///
-    /// // Each instance is satisfiable by itself
-    /// assert_eq!(btor.sat(), SolverResult::Sat);
-    /// assert_eq!(btor_2.sat(), SolverResult::Sat);
-    ///
-    /// // In the first instance, `y > 10`, while in the second,
-    /// // `y < 10`
-    /// let y_solution = y.get_a_solution().as_u64().unwrap();
-    /// assert!(y_solution > 10);
-    /// let y_2_solution = y_2.get_a_solution().as_u64().unwrap();
-    /// assert!(y_2_solution < 10);
-    /// ```
-    pub fn duplicate(&self) -> Self {
-        let duplicated = Self {
-            btor: unsafe { boolector_clone(self.as_raw()) },
-            timeout_state: Pin::new(Box::new(TimeoutState::with_timeout_duration(
-                self.timeout_state.get_timeout_duration(),
-            ))),
-        };
-        // we need to inform the callback about the new location of the `TimeoutState`
-        let ptr_to_ts: Pin<&TimeoutState> = (&self.timeout_state).as_ref();
-        let raw_ptr_to_ts: *const TimeoutState = Pin::into_inner(ptr_to_ts) as *const TimeoutState;
-        let void_ptr_to_ts: *mut c_void = raw_ptr_to_ts as *mut c_void;
-        unsafe { boolector_set_term(self.as_raw(), Some(timeout::callback), void_ptr_to_ts) }
-        duplicated
+        unsafe { bitwuzla_pop(self.as_raw(), n) }
     }
 
     /// Given a `BV` originally created for any `Btor`, get the corresponding
@@ -601,15 +626,18 @@ impl Btor {
     /// For a code example, see
     /// [`Btor::duplicate()`](struct.Btor.html#method.duplicate).
     #[allow(clippy::if_same_then_else)]
-    pub fn get_matching_bv<R: Borrow<Btor> + Clone>(btor: R, bv: &BV<R>) -> Option<BV<R>> {
-        let node = unsafe { boolector_match_node(btor.borrow().as_raw(), bv.node) };
+    pub fn get_matching_bv<R: Borrow<Bitwuzla> + Clone>(_btor: R, _bv: &BV<R>) -> Option<BV<R>> {
+        unimplemented!()
+        /*
+        let node = unsafe { bitwuzla_match_node(btor.borrow().as_raw(), bv.node) };
         if node.is_null() {
             None
-        } else if unsafe { boolector_is_array(btor.borrow().as_raw(), node) } {
+        } else if unsafe { bitwuzla_is_array(btor.borrow().as_raw(), node) } {
             None
         } else {
             Some(BV { btor, node })
         }
+        */
     }
 
     /// Given an `Array` originally created for any `Btor`, get the corresponding
@@ -620,18 +648,21 @@ impl Btor {
     ///
     /// It's also fine to call this with an `Array` created for the given `Btor`
     /// itself, in which case you'll just get back `Some(array.clone())`.
-    pub fn get_matching_array<R: Borrow<Btor> + Clone>(
-        btor: R,
-        array: &Array<R>,
+    pub fn get_matching_array<R: Borrow<Bitwuzla> + Clone>(
+        _btor: R,
+        _array: &Array<R>,
     ) -> Option<Array<R>> {
-        let node = unsafe { boolector_match_node(btor.borrow().as_raw(), array.node) };
+        unimplemented!()
+        /*
+        let node = unsafe { bitwuzla_match_node(btor.borrow().as_raw(), array.node) };
         if node.is_null() {
             None
-        } else if unsafe { boolector_is_array(btor.borrow().as_raw(), node) } {
+        } else if unsafe { bitwuzla_is_array(btor.borrow().as_raw(), node) } {
             Some(Array { btor, node })
         } else {
             None
         }
+        */
     }
 
     /// Given a symbol, find the `BV` in the given `Btor` which has that symbol.
@@ -640,17 +671,20 @@ impl Btor {
     /// their symbols, this can also be used to find the copied version of a
     /// given `BV` in the new `Btor`.
     #[allow(clippy::if_same_then_else)]
-    pub fn get_bv_by_symbol<R: Borrow<Btor> + Clone>(btor: R, symbol: &str) -> Option<BV<R>> {
+    pub fn get_bv_by_symbol<R: Borrow<Bitwuzla> + Clone>(_btor: R, _symbol: &str) -> Option<BV<R>> {
+        unimplemented!()
+        /*
         let cstring = CString::new(symbol).unwrap();
         let symbol = cstring.as_ptr() as *const c_char;
-        let node = unsafe { boolector_match_node_by_symbol(btor.borrow().as_raw(), symbol) };
+        let node = unsafe { bitwuzla_match_node_by_symbol(btor.borrow().as_raw(), symbol) };
         if node.is_null() {
             None
-        } else if unsafe { boolector_is_array(btor.borrow().as_raw(), node) } {
+        } else if unsafe { bitwuzla_is_array(btor.borrow().as_raw(), node) } {
             None
         } else {
             Some(BV { btor, node })
         }
+        */
     }
 
     /// Given a symbol, find the `Array` in the given `Btor` which has that
@@ -659,37 +693,46 @@ impl Btor {
     /// Since `Btor::duplicate()` copies all `Array`s to the new `Btor` including
     /// their symbols, this can also be used to find the copied version of a
     /// given `Array` in the new `Btor`.
-    pub fn get_array_by_symbol<R: Borrow<Btor> + Clone>(btor: R, symbol: &str) -> Option<Array<R>> {
+    pub fn get_array_by_symbol<R: Borrow<Bitwuzla> + Clone>(
+        _btor: R,
+        _symbol: &str,
+    ) -> Option<Array<R>> {
+        unimplemented!()
+        /*
         let cstring = CString::new(symbol).unwrap();
         let symbol = cstring.as_ptr() as *const c_char;
-        let node = unsafe { boolector_match_node_by_symbol(btor.borrow().as_raw(), symbol) };
+        let node = unsafe { bitwuzla_match_node_by_symbol(btor.borrow().as_raw(), symbol) };
         if node.is_null() {
             None
-        } else if unsafe { boolector_is_array(btor.borrow().as_raw(), node) } {
+        } else if unsafe { bitwuzla_is_array(btor.borrow().as_raw(), node) } {
             Some(Array { btor, node })
         } else {
             None
         }
+        */
     }
 
     /// Add all current assumptions as assertions
     pub fn fixate_assumptions(&self) {
-        unsafe { boolector_fixate_assumptions(self.as_raw()) }
+        unsafe { bitwuzla_fixate_assumptions(self.as_raw()) }
     }
 
     /// Remove all added assumptions
     pub fn reset_assumptions(&self) {
-        unsafe { boolector_reset_assumptions(self.as_raw()) }
+        unsafe { bitwuzla_reset_assumptions(self.as_raw()) }
     }
 
     /// Reset all statistics other than time statistics
     pub fn reset_stats(&self) {
-        unsafe { boolector_reset_stats(self.as_raw()) }
+        todo!()
+        // unsafe { bitwuzla_reset_stats(self.as_raw()) }
     }
 
     /// Reset time statistics
     pub fn reset_time(&self) {
-        unsafe { boolector_reset_time(self.as_raw()) }
+        // No-op. Time is reset when solving anyways?
+        // todo!()
+        // unsafe { bitwuzla_reset_time(self.as_raw()) }
     }
 
     /// Get a `String` describing the current constraints
@@ -699,8 +742,9 @@ impl Btor {
             if tmpfile.is_null() {
                 panic!("Failed to create a temp file");
             }
+            let format = CString::new("smt2").unwrap();
             // Write the data to `tmpfile`
-            boolector_dump_smt2(self.as_raw(), tmpfile);
+            bitwuzla_dump_formula(self.as_raw(), format.as_ptr(), tmpfile);
             // Seek to the end of `tmpfile`
             assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
             // Get the length of `tmpfile`
@@ -733,7 +777,7 @@ impl Btor {
             }
             // Write the data to `tmpfile`
             let format_cstring = CString::new("btor").unwrap();
-            boolector_print_model(
+            bitwuzla_print_model(
                 self.as_raw(),
                 format_cstring.as_ptr() as *mut c_char,
                 tmpfile,
@@ -760,31 +804,29 @@ impl Btor {
         }
     }
 
-    /// Get Boolector's version string
+    /// Get bitwuzla's version string
     pub fn get_version(&self) -> String {
-        let cstr = unsafe { CStr::from_ptr(boolector_version(self.as_raw())) };
+        let cstr = unsafe { CStr::from_ptr(bitwuzla_version(self.as_raw())) };
         cstr.to_str().unwrap().to_owned()
     }
 
-    /// Get Boolector's copyright notice
+    /// Get bitwuzla's copyright notice
     pub fn get_copyright(&self) -> String {
-        let cstr = unsafe { CStr::from_ptr(boolector_copyright(self.as_raw())) };
+        let cstr = unsafe { CStr::from_ptr(bitwuzla_copyright(self.as_raw())) };
         cstr.to_str().unwrap().to_owned()
     }
 }
 
-impl Default for Btor {
+impl Default for Bitwuzla {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Drop for Btor {
+impl Drop for Bitwuzla {
     fn drop(&mut self) {
         unsafe {
-            boolector_release_all(self.as_raw());
-            assert_eq!(boolector_get_refs(self.as_raw()) as i32, 0);
-            boolector_delete(self.as_raw());
+            bitwuzla_delete(self.as_raw());
         }
     }
 }

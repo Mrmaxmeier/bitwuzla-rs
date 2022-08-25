@@ -1,7 +1,7 @@
-use crate::node::{Array, BV};
 use crate::option::BtorOption;
 use crate::option::*;
 use crate::timeout::{self, TimeoutState};
+use crate::{Array, BV};
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
@@ -737,71 +737,29 @@ impl Bitwuzla {
 
     /// Get a `String` describing the current constraints
     pub fn print_constraints(&self) -> String {
-        unsafe {
-            let tmpfile: *mut libc::FILE = libc::tmpfile();
-            if tmpfile.is_null() {
-                panic!("Failed to create a temp file");
-            }
-            let format = CString::new("smt2").unwrap();
-            // Write the data to `tmpfile`
-            bitwuzla_dump_formula(self.as_raw(), format.as_ptr(), tmpfile);
-            // Seek to the end of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
-            // Get the length of `tmpfile`
-            let length = libc::ftell(tmpfile);
-            if length < 0 {
-                panic!("ftell() returned a negative value");
-            }
-            // Seek back to the beginning of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_SET), 0);
-            let mut buffer = Vec::with_capacity(length as usize);
-            libc::fread(
-                buffer.as_mut_ptr() as *mut c_void,
-                1,
-                length as usize,
-                tmpfile,
-            );
-            libc::fclose(tmpfile);
-            buffer.set_len(length as usize);
-            String::from_utf8_unchecked(buffer)
-        }
+        let format = CString::new("smt2").unwrap();
+        crate::util::tmp_file_to_string(
+            |tmpfile| unsafe {
+                bitwuzla_dump_formula(self.as_raw(), format.as_ptr(), tmpfile);
+            },
+            false,
+        )
     }
 
     /// Get a `String` describing the current model, including a set of
     /// satisfying assignments for all variables
     pub fn print_model(&self) -> String {
-        unsafe {
-            let tmpfile: *mut libc::FILE = libc::tmpfile();
-            if tmpfile.is_null() {
-                panic!("Failed to create a temp file");
-            }
-            // Write the data to `tmpfile`
-            let format_cstring = CString::new("btor").unwrap();
-            bitwuzla_print_model(
-                self.as_raw(),
-                format_cstring.as_ptr() as *mut c_char,
-                tmpfile,
-            );
-            // Seek to the end of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
-            // Get the length of `tmpfile`
-            let length = libc::ftell(tmpfile);
-            if length < 0 {
-                panic!("ftell() returned a negative value");
-            }
-            // Seek back to the beginning of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_SET), 0);
-            let mut buffer = Vec::with_capacity(length as usize);
-            libc::fread(
-                buffer.as_mut_ptr() as *mut c_void,
-                1,
-                length as usize,
-                tmpfile,
-            );
-            libc::fclose(tmpfile);
-            buffer.set_len(length as usize);
-            String::from_utf8_unchecked(buffer)
-        }
+        let format_cstring = CString::new("btor").unwrap();
+        crate::util::tmp_file_to_string(
+            |tmpfile| unsafe {
+                bitwuzla_print_model(
+                    self.as_raw(),
+                    format_cstring.as_ptr() as *mut c_char,
+                    tmpfile,
+                );
+            },
+            false,
+        )
     }
 
     /// Get bitwuzla's version string

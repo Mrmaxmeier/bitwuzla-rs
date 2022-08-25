@@ -1,5 +1,6 @@
 use crate::btor::Bitwuzla;
 use crate::sort::Sort;
+use crate::Array;
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
@@ -9,9 +10,9 @@ use std::os::raw::{c_char, c_void};
 /// A bitvector object: that is, a single symbolic value, consisting of some
 /// number of symbolic bits.
 ///
-/// This is generic in the `Btor` reference type.
-/// For instance, you could use `BV<Rc<Btor>>` for single-threaded applications,
-/// or `BV<Arc<Btor>>` for multi-threaded applications.
+/// This is generic in the `Bitwuzla` reference type.
+/// For instance, you could use `BV<Rc<Bitwuzla>>` for single-threaded applications,
+/// or `BV<Arc<Bitwuzla>>` for multi-threaded applications.
 #[derive(PartialEq, Eq)]
 pub struct BV<R: Borrow<Bitwuzla> + Clone> {
     pub(crate) btor: R,
@@ -19,8 +20,8 @@ pub struct BV<R: Borrow<Bitwuzla> + Clone> {
 }
 
 // According to
-// https://groups.google.com/forum/#!msg/bitwuzla/itYGgJxU3mY/AC2O0898BAAJ,
-// the bitwuzla library is thread-safe, meaning `*const BitwuzlaTerm` can be
+// https://groups.google.com/forum/#!msg/boolector/itYGgJxU3mY/AC2O0898BAAJ,
+// the boolector library is thread-safe, meaning `*const BitwuzlaTerm` can be
 // both `Send` and `Sync`.
 // So as long as `R` is `Send` and/or `Sync`, we can mark `BV` as `Send` and/or
 // `Sync` respectively.
@@ -319,59 +320,16 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     /// ```
     pub fn as_binary_str(&self) -> Option<String> {
         if self.is_const() {
-            /*
-            #[repr(C)]
-            pub struct BzlaBitVector {
-                _unused: [u8; 0],
-            }
-            extern "C" {
-                // fn bzla_bv_to_uint64(bv: *const BzlaBitVector) -> u64;
-                // fn bzla_bv_get_width(bv: *const BzlaBitVector) -> u32;
-                fn print_fmt_bv_model_btor(
-                    bzla: *mut bitwuzla_sys::Bitwuzla,
-                    base: u32,
-                    assignment: *const BzlaBitVector,
-                    file: *const libc::FILE,
-                );
-                fn bzla_model_get_bv(
-                    bzla: *mut bitwuzla_sys::Bitwuzla,
-                    exp: *const BitwuzlaTerm,
-                ) -> *const BzlaBitVector;
-            }
-            let width = self.get_width();
-            */
-
-            // let raw = unsafe { bitwuzla_get_bv_value(self.btor.borrow().as_raw(), self.node) };
-            // let cstr = unsafe { CStr::from_ptr(raw) };
-            // let string = cstr.to_str().unwrap().to_owned();
-            // Some(string)
-            unsafe {
-                let tmpfile: *mut libc::FILE = libc::tmpfile();
-                assert!(!tmpfile.is_null());
-                let format = CString::new("smt2").unwrap();
-                // Write the data to `tmpfile`
-                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
-                // Seek to the end of `tmpfile`
-                assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
-                // Get the length of `tmpfile`
-                let length = libc::ftell(tmpfile);
-                assert!(length >= 0);
-                // Seek back to the beginning of `tmpfile`
-                assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_SET), 0);
-                let mut buffer = Vec::with_capacity(length as usize);
-                libc::fread(
-                    buffer.as_mut_ptr() as *mut c_void,
-                    1,
-                    length as usize,
-                    tmpfile,
-                );
-                buffer.set_len(length as usize);
-                let string = String::from_utf8_unchecked(buffer);
-                libc::fclose(tmpfile);
-                assert!(string.starts_with("#b"));
-                let string = string[2 ..].to_string();
-                Some(string)
-            }
+            let format = CString::new("smt2").unwrap();
+            let string = crate::util::tmp_file_to_string(
+                |tmpfile| unsafe {
+                    bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+                },
+                false,
+            );
+            assert!(string.starts_with("#b"));
+            let string = string[2 ..].to_string();
+            Some(string)
         } else {
             None
         }
@@ -1152,325 +1110,21 @@ impl<R: Borrow<Bitwuzla> + Clone> Clone for BV<R> {
     fn clone(&self) -> Self {
         Self {
             btor: self.btor.clone(),
-            /*
-            node: unsafe {
-                bitwuzla_copy(self.btor.borrow().as_raw(), self.node) // not an actual copy, just incrementing the refcount properly
-            },
-            */
             node: self.node,
         }
-    }
-}
-
-impl<R: Borrow<Bitwuzla> + Clone> Drop for BV<R> {
-    fn drop(&mut self) {
-        // Actually releasing here seems to expose some UAF bugs in boolector
-        // Instead, we just rely on release_all when dropping the Btor
-        // unsafe { bitwuzla_release(self.btor.borrow().as_raw(), self.node) }
     }
 }
 
 impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for BV<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        const MAX_LENGTH: i64 = 2000; // If the text representation of the `BV` exceeds this length, subsitute a placeholder instead
-        unsafe {
-            let tmpfile: *mut libc::FILE = libc::tmpfile();
-            if tmpfile.is_null() {
-                panic!("Failed to create a temp file");
-            }
-            let format = CString::new("smt2").unwrap();
-            // Write the data to `tmpfile`
-            bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
-            // Seek to the end of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
-            // Get the length of `tmpfile`
-            let length = libc::ftell(tmpfile);
-            if length < 0 {
-                panic!("ftell() returned a negative value");
-            }
-            // Seek back to the beginning of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_SET), 0);
-            let retval = if length > MAX_LENGTH {
-                write!(f, "<output too large to display>")
-            } else {
-                let mut buffer = Vec::with_capacity(length as usize);
-                libc::fread(
-                    buffer.as_mut_ptr() as *mut c_void,
-                    1,
-                    length as usize,
-                    tmpfile,
-                );
-                buffer.set_len(length as usize);
-                let string = String::from_utf8_unchecked(buffer);
-                write!(f, "{}", string)
-            };
-            libc::fclose(tmpfile);
-            retval
-        }
-    }
-}
-
-/// An `Array` in bitwuzla is really just a map from `BV`s to `BV`s.
-///
-/// Like `BV`, `Array` is generic in the `Btor` reference type.
-/// For instance, you could use `Array<Rc<Btor>>` for single-threaded applications,
-/// or `Array<Arc<Btor>>` for multi-threaded applications.
-#[derive(PartialEq, Eq)]
-pub struct Array<R: Borrow<Bitwuzla> + Clone> {
-    pub(crate) btor: R,
-    pub(crate) node: *const BitwuzlaTerm,
-}
-
-// According to
-// https://groups.google.com/forum/#!msg/bitwuzla/itYGgJxU3mY/AC2O0898BAAJ,
-// the bitwuzla library is thread-safe, meaning `*mut BitwuzlaTerm` can be
-// both `Send` and `Sync`.
-// So as long as `R` is `Send` and/or `Sync`, we can mark `Array` as `Send`
-// and/or `Sync` respectively.
-unsafe impl<R: Borrow<Bitwuzla> + Clone + Send> Send for Array<R> {}
-unsafe impl<R: Borrow<Bitwuzla> + Clone + Sync> Sync for Array<R> {}
-
-impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
-    /// Create a new `Array` which maps `BV`s of width `index_width` to `BV`s of
-    /// width `element_width`. All values in the `Array` will be unconstrained.
-    ///
-    /// The `symbol`, if present, will be used to identify the `Array` when printing
-    /// a model or dumping to file. It must be unique if it is present.
-    ///
-    /// Both `index_width` and `element_width` must not be 0.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use bitwuzla::{Array, Btor, BV};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    ///
-    /// // `arr` is an `Array` which maps 8-bit values to 8-bit values
-    /// let arr = Array::new(btor.clone(), 8, 8, Some("arr"));
-    ///
-    /// // Write the value `3` to array index `7`
-    /// let three = BV::from_u32(btor.clone(), 3, 8);
-    /// let seven = BV::from_u32(btor.clone(), 7, 8);
-    /// let arr2 = arr.write(&seven, &three);
-    ///
-    /// // Read back out the resulting value
-    /// let read_bv = arr2.read(&seven);
-    ///
-    /// // should be the value `3`
-    /// assert_eq!(read_bv.as_u64().unwrap(), 3);
-    /// ```
-    pub fn new(btor: R, index_width: u32, element_width: u32, symbol: Option<&str>) -> Self {
-        todo!()
-        /*
-        let index_sort = Sort::bitvector(btor.clone(), index_width);
-        let element_sort = Sort::bitvector(btor.clone(), element_width);
-        let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
-        let node = match symbol {
-            None => unsafe {
-                bitwuzla_array(
-                    btor.borrow().as_raw(),
-                    array_sort.as_raw(),
-                    std::ptr::null(),
-                )
+        let format = CString::new("smt2").unwrap();
+        let string = crate::util::tmp_file_to_string(
+            |tmpfile| unsafe {
+                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
             },
-            Some(symbol) => {
-                let cstring = CString::new(symbol).unwrap();
-                let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { bitwuzla_array(btor.borrow().as_raw(), array_sort.as_raw(), symbol) }
-            },
-        };
-        Self { btor, node }
-        */
-    }
-
-    /// Create a new `Array` which maps `BV`s of width `index_width` to `BV`s of
-    /// width `element_width`. The `Array` will be initialized so that all
-    /// indices map to the same constant value `val`.
-    ///
-    /// Both `index_width` and `element_width` must not be 0.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use bitwuzla::{Array, Btor, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
-    /// btor.set_opt(BtorOption::Incremental(true));
-    ///
-    /// // `arr` is an `Array` which maps 8-bit values to 8-bit values.
-    /// // It is initialized such that all entries are the constant `42`.
-    /// let fortytwo = BV::from_u32(btor.clone(), 42, 8);
-    /// let arr = Array::new_initialized(btor.clone(), 8, 8, &fortytwo);
-    ///
-    /// // Reading the value at any index should produce `42`.
-    /// let read_bv = arr.read(&BV::from_u32(btor.clone(), 61, 8));
-    /// assert_eq!(btor.sat(), SolverResult::Sat);
-    /// assert_eq!(read_bv.get_a_solution().as_u64().unwrap(), 42);
-    ///
-    /// // Write the value `3` to array index `7`
-    /// let three = BV::from_u32(btor.clone(), 3, 8);
-    /// let seven = BV::from_u32(btor.clone(), 7, 8);
-    /// let arr2 = arr.write(&seven, &three);
-    ///
-    /// // Read back out the value at index `7`. It should be `3`.
-    /// let read_bv = arr2.read(&seven);
-    /// assert_eq!(read_bv.as_u64().unwrap(), 3);
-    ///
-    /// // Reading the value at any other index should still produce `42`.
-    /// let read_bv = arr2.read(&BV::from_u32(btor.clone(), 99, 8));
-    /// assert_eq!(btor.sat(), SolverResult::Sat);
-    /// //assert_eq!(read_bv.get_a_solution().as_u64().unwrap(), 42);
-    /// ```
-    pub fn new_initialized(btor: R, index_width: u32, element_width: u32, val: &BV<R>) -> Self {
-        let index_sort = Sort::bitvector(btor.clone(), index_width);
-        let element_sort = Sort::bitvector(btor.clone(), element_width);
-        let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
-        let node = unsafe {
-            bitwuzla_mk_const_array(btor.borrow().as_raw(), array_sort.as_raw(), val.node)
-        };
-        Self { btor, node }
-    }
-
-    /// Get the bitwidth of the index type of the `Array`
-    pub fn get_index_width(&self) -> u32 {
-        unsafe {
-            let sort = bitwuzla_term_array_get_index_sort(self.node);
-            // TODO: do we know if the sort is actually a bv?
-            bitwuzla_sort_bv_get_size(sort)
-        }
-    }
-
-    /// Get the bitwidth of the element type of the `Array`
-    pub fn get_element_width(&self) -> u32 {
-        unsafe {
-            let sort = bitwuzla_term_array_get_element_sort(self.node);
-            bitwuzla_sort_bv_get_size(sort)
-        }
-    }
-
-    /// Get the symbol of the `Array`, if one was assigned
-    pub fn get_symbol(&self) -> Option<&str> {
-        let raw = unsafe { bitwuzla_term_get_symbol(self.node) };
-        if raw.is_null() {
-            None
-        } else {
-            let cstr = unsafe { CStr::from_ptr(raw) };
-            Some(cstr.to_str().unwrap())
-        }
-    }
-
-    /// Does the `Array` have a constant value?
-    pub fn is_const(&self) -> bool {
-        unsafe { bitwuzla_term_is_const(self.node) }
-    }
-
-    /// Does `self` have the same index and element widths as `other`?
-    pub fn has_same_widths(&self, other: &Self) -> bool {
-        unsafe { bitwuzla_term_is_equal_sort(self.node, other.node) }
-    }
-
-    binop!(
-        /// Array equality. `self` and `other` must have the same index and element widths.
-        => _eq, BITWUZLA_KIND_EQUAL
-    );
-    binop!(
-        /// Array inequality. `self` and `other` must have the same index and element widths.
-        => _ne, BITWUZLA_KIND_DISTINCT
-    );
-
-    /// Array read: get the value in the `Array` at the given `index`
-    pub fn read(&self, index: &BV<R>) -> BV<R> {
-        BV {
-            btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term2(
-                    self.btor.borrow().as_raw(),
-                    BITWUZLA_KIND_ARRAY_SELECT,
-                    self.node,
-                    index.node,
-                )
-            },
-        }
-    }
-
-    /// Array write: return a new `Array` which has `value` at position `index`,
-    /// and all other elements unchanged.
-    pub fn write(&self, index: &BV<R>, value: &BV<R>) -> Self {
-        Self {
-            btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term3(
-                    self.btor.borrow().as_raw(),
-                    BITWUZLA_KIND_ARRAY_STORE,
-                    self.node,
-                    index.node,
-                    value.node,
-                )
-            },
-        }
-    }
-}
-
-impl<R: Borrow<Bitwuzla> + Clone> Clone for Array<R> {
-    fn clone(&self) -> Self {
-        Self {
-            btor: self.btor.clone(),
-            node: self.node,
-            // node: unsafe {
-            //     bitwuzla_copy(self.btor.borrow().as_raw(), self.node) // not an actual copy, just incrementing the refcount properly
-            // },
-        }
-    }
-}
-
-impl<R: Borrow<Bitwuzla> + Clone> Drop for Array<R> {
-    fn drop(&mut self) {
-        // Actually releasing here seems to expose some UAF bugs in bitwuzla
-        // Instead, we just rely on release_all when dropping the Btor
-        // unsafe { bitwuzla_release(self.btor.borrow().as_raw(), self.node) }
-    }
-}
-
-impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for Array<R> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        const MAX_LENGTH: i64 = 2000; // If the text representation of the `Array` exceeds this length, subsitute a placeholder instead
-        unsafe {
-            let tmpfile: *mut libc::FILE = libc::tmpfile();
-            if tmpfile.is_null() {
-                panic!("Failed to create a temp file");
-            }
-            let format = CString::new("smt2").unwrap();
-            // Write the data to `tmpfile`
-            bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
-            // Seek to the end of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_END), 0);
-            // Get the length of `tmpfile`
-            let length = libc::ftell(tmpfile);
-            if length < 0 {
-                panic!("ftell() returned a negative value");
-            }
-            // Seek back to the beginning of `tmpfile`
-            assert_eq!(libc::fseek(tmpfile, 0, libc::SEEK_SET), 0);
-            let retval = if length > MAX_LENGTH {
-                write!(f, "<output too large to display>")
-            } else {
-                let mut buffer = Vec::with_capacity(length as usize);
-                libc::fread(
-                    buffer.as_mut_ptr() as *mut c_void,
-                    1,
-                    length as usize,
-                    tmpfile,
-                );
-                buffer.set_len(length as usize);
-                let string = String::from_utf8_unchecked(buffer);
-                write!(f, "{}", string)
-            };
-            libc::fclose(tmpfile);
-            retval
-        }
+            true,
+        );
+        write!(f, "{}", string)
     }
 }
 

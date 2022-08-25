@@ -48,6 +48,21 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
         })
     }
 
+    /// Create a floating-point sort for the given exponent and significand width.
+    pub fn fp(btor: R, exp_width: u32, sig_width: u32) -> Self {
+        assert!(
+            exp_width > 0,
+            "bitwuzla: cannot create 0-exp_width bitvector sort"
+        );
+        assert!(
+            sig_width > 0,
+            "bitwuzla: cannot create 0-sig_width bitvector sort"
+        );
+        Self::from_raw(btor.clone(), unsafe {
+            bitwuzla_mk_fp_sort(btor.borrow().as_raw(), exp_width, sig_width)
+        })
+    }
+
     /// Create an array sort. An `Array` in bitwuzla is really just a map
     /// which maps items of the `index` sort to the `element` sort.
     ///

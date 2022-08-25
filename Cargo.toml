@@ -7,7 +7,7 @@ description = "Safe high-level bindings for the Bitwuzla SMT solver"
 # documentation = "https://docs.rs/bitwuzla"
 # repository = "https://github.com/cdisselkoen/bitwuzla-rs"
 readme = "README.md"
-keywords = ["bitwuzla", "smt", "ffi", "bindings"]
+keywords = ["boolector", "bitwuzla", "smt", "ffi", "bindings"]
 license = "MIT"
 
 [dependencies]

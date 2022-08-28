@@ -7,7 +7,7 @@ use std::fmt;
 use std::os::raw::{c_char, c_void};
 
 /// A floating-point object: that is, a single symbolic value, consisting of a
-/// symbolic exponent and significand component.
+/// symbolic exponent, significand component, and sign component.
 ///
 /// This is generic in the `Bitwuzla` reference type.
 /// For instance, you could use `FP<Rc<Bitwuzla>>` for single-threaded applications,
@@ -35,6 +35,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
     /// let fp = FP::new(btor.clone(), 8, 23, Some("foo"));
+    /// assert_eq!(format!("{:?}", fp), "(declare-const foo (_ FloatingPoint 8 23))");
     ///
     /// // Assert that it must be greater than `3`
     /// // fp.gt(&BV::from_u32(btor.clone(), 3, 8)).assert();
@@ -57,5 +58,29 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
             },
         };
         Self { btor, node }
+    }
+}
+
+impl<R: Borrow<Bitwuzla> + Clone> Clone for FP<R> {
+    fn clone(&self) -> Self {
+        Self {
+            btor: self.btor.clone(),
+            node: self.node,
+        }
+    }
+}
+
+impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for FP<R> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let format = CString::new("smt2").unwrap();
+        let string = crate::util::tmp_file_to_string(
+            |tmpfile| unsafe {
+                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+            },
+            true,
+        )
+        .trim()
+        .to_owned();
+        write!(f, "{}", string)
     }
 }

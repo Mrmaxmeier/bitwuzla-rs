@@ -38,12 +38,13 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// # Example
     ///
     /// ```
-    /// # use bitwuzla::{Array, Btor, BV};
+    /// # use bitwuzla::{Array, Btor, BV, SolverResult};
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     ///
     /// // `arr` is an `Array` which maps 8-bit values to 8-bit values
     /// let arr = Array::new(btor.clone(), 8, 8, Some("arr"));
+    /// assert_eq!(format!("{:?}", arr), "(declare-const arr (Array (_ BitVec 8) (_ BitVec 8)))");
     ///
     /// // Write the value `3` to array index `7`
     /// let three = BV::from_u32(btor.clone(), 3, 8);
@@ -55,6 +56,13 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     ///
     /// // should be the value `3`
     /// assert_eq!(read_bv.as_u64().unwrap(), 3);
+    ///
+    /// // Reading other indices should return a unconstrained values.
+    /// let two = BV::from_u32(btor.clone(), 2, 8);
+    /// let four = BV::from_u32(btor.clone(), 4, 8);
+    /// arr2.read(&two)._eq(&four).assert();
+    /// arr2.read(&four)._eq(&two).assert();
+    /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// ```
     pub fn new(btor: R, index_width: u32, element_width: u32, symbol: Option<&str>) -> Self {
         let index_sort = Sort::bitvector(btor.clone(), index_width);
@@ -98,6 +106,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// // It is initialized such that all entries are the constant `42`.
     /// let fortytwo = BV::from_u32(btor.clone(), 42, 8);
     /// let arr = Array::new_initialized(btor.clone(), 8, 8, &fortytwo);
+    /// assert_eq!(format!("{:?}", arr), "((as const (Array (_ BitVec 8) (_ BitVec 8))) #b00101010)");
     ///
     /// // Reading the value at any index should produce `42`.
     /// let read_bv = arr.read(&BV::from_u32(btor.clone(), 61, 8));
@@ -246,7 +255,9 @@ impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for Array<R> {
                 bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
             },
             true,
-        );
+        )
+        .trim()
+        .to_owned();
         write!(f, "{}", res)
     }
 }

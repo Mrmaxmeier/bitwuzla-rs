@@ -75,6 +75,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
     /// let bv = BV::new(btor.clone(), 8, Some("foo"));
+    /// assert_eq!(format!("{:?}", bv), "(declare-const foo (_ BitVec 8))");
     ///
     /// // Assert that it must be greater than `3`
     /// bv.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
@@ -1123,7 +1124,9 @@ impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for BV<R> {
                 bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
             },
             true,
-        );
+        )
+        .trim()
+        .to_owned();
         write!(f, "{}", string)
     }
 }

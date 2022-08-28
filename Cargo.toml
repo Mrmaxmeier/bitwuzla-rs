@@ -11,8 +11,9 @@ keywords = ["boolector", "bitwuzla", "smt", "ffi", "bindings"]
 license = "MIT"
 
 [dependencies]
-bitwuzla-sys = "0.2.0"
+# bitwuzla-sys = "0.2.0"
 # bitwuzla-sys = { path = "../bitwuzla-sys" }
+bitwuzla-sys = { git = "https://github.com/Mrmaxmeier/bitwuzla-sys" }
 libc = "0.2.73"
 
 [features]

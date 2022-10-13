@@ -73,6 +73,12 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
         })
     }
 
+    pub fn rounding_mode(btor: R) -> Self {
+        Self::from_raw(btor.clone(), unsafe {
+            bitwuzla_mk_rm_sort(btor.borrow().as_raw())
+        })
+    }
+
     /// Is `self` an array sort?
     pub fn is_array_sort(&self) -> bool {
         unsafe { bitwuzla_sort_is_array(self.as_raw()) }
@@ -86,6 +92,11 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     /// Is `self` a function sort?
     pub fn is_fun_sort(&self) -> bool {
         unsafe { bitwuzla_sort_is_fun(self.as_raw()) }
+    }
+
+    /// Is `self` a function sort?
+    pub fn is_rounding_mode_sort(&self) -> bool {
+        unsafe { bitwuzla_sort_is_rm(self.as_raw()) }
     }
 }
 

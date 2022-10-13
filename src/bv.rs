@@ -1,11 +1,11 @@
 use crate::btor::Bitwuzla;
 use crate::sort::Sort;
-use crate::Array;
+use crate::{Array, FP};
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
 use std::fmt;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_char;
 
 /// A bitvector object: that is, a single symbolic value, consisting of some
 /// number of symbolic bits.
@@ -1101,6 +1101,46 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
                     self.node,
                     true_array.node,
                     false_array.node,
+                )
+            },
+        }
+    }
+
+    /// Create an if-then-else `FP` node.
+    /// If `self` is true, then `true_fp` is returned, else `false_fp` is returned.
+    ///
+    /// `self` must have bitwidth 1.
+    pub fn cond_fp(&self, true_fp: &FP<R>, false_fp: &FP<R>) -> FP<R> {
+        assert_eq!(
+            self.get_width(),
+            1,
+            "cond_fp: self must have bitwidth 1; got {}",
+            self.get_width()
+        );
+        FP {
+            btor: self.btor.clone(),
+            node: unsafe {
+                bitwuzla_mk_term3(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_ITE,
+                    self.node,
+                    true_fp.node,
+                    false_fp.node,
+                )
+            },
+        }
+    }
+
+    pub fn to_fp(&self, exp_width: u32, sig_width: u32) -> FP<R> {
+        FP {
+            btor: self.btor.clone(),
+            node: unsafe {
+                bitwuzla_mk_term1_indexed2(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_FP_TO_FP_FROM_BV,
+                    self.node,
+                    exp_width,
+                    sig_width,
                 )
             },
         }

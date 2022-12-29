@@ -4,7 +4,7 @@ use crate::RoundingMode;
 use crate::BV;
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fmt;
 use std::os::raw::c_char;
 
@@ -194,11 +194,24 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         }
     }
 
+    /// # Example
+    ///
+    /// ```
+    /// # use bitwuzla::{Btor, FP};
+    /// let btor = Btor::new();
+    ///
+    /// // as_f64 should round-trip for every edgecase:
+    /// for val in [-0., 0., f64::MIN, f64::MAX, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+    ///     let leet = FP::from_f64(&btor, val);
+    ///     assert_eq!(leet.as_f64(), Some(val));
+    /// }
+    /// ```
     pub fn as_f64(&self) -> Option<f64> {
         if self.is_const() {
             // TODO: assert that this is a binary64 fp?
             let s = self.as_str()?;
             dbg!(&s);
+            // TODO: this is fp32
             assert!(s.starts_with("(fp #b"));
             assert_eq!(
                 s.len(),
@@ -367,6 +380,59 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         /// Floating-point round to subtraction. (sic)
         => sub, BITWUZLA_KIND_FP_SUB
     );
+
+    pub fn to_sbv(&self, width: u32) -> BV<R> {
+        // TODO: assert width?
+        BV {
+            btor: self.btor.clone(),
+            node: unsafe {
+                bitwuzla_mk_term1_indexed1(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_FP_TO_SBV,
+                    self.node,
+                    width,
+                )
+            },
+        }
+    }
+
+    pub fn to_ubv(&self, width: u32) -> BV<R> {
+        // TODO: assert width?
+        BV {
+            btor: self.btor.clone(),
+            node: unsafe {
+                bitwuzla_mk_term1_indexed1(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_FP_TO_UBV,
+                    self.node,
+                    width,
+                )
+            },
+        }
+    }
+
+    pub fn to_fp32(&self) -> FP<R> {
+        self.to_fp(8, 23 + 1)
+    }
+
+    pub fn to_fp64(&self) -> FP<R> {
+        self.to_fp(11, 52 + 1)
+    }
+
+    pub fn to_fp(&self, exp_width: u32, sig_width: u32) -> FP<R> {
+        FP {
+            btor: self.btor.clone(),
+            node: unsafe {
+                bitwuzla_mk_term1_indexed2(
+                    self.btor.borrow().as_raw(),
+                    BITWUZLA_KIND_FP_TO_FP_FROM_FP,
+                    self.node,
+                    exp_width,
+                    sig_width,
+                )
+            },
+        }
+    }
 }
 
 impl<R: Borrow<Bitwuzla> + Clone> Clone for FP<R> {

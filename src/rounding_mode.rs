@@ -1,11 +1,8 @@
 use crate::btor::Bitwuzla;
-use crate::sort::Sort;
-use crate::{Array, FP};
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fmt;
-use std::os::raw::c_char;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RoundingMode {

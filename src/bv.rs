@@ -1131,6 +1131,14 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         }
     }
 
+    pub fn to_fp32(&self) -> FP<R> {
+        self.to_fp(8, 23 + 1)
+    }
+
+    pub fn to_fp64(&self) -> FP<R> {
+        self.to_fp(11, 52 + 1)
+    }
+
     pub fn to_fp(&self, exp_width: u32, sig_width: u32) -> FP<R> {
         FP {
             btor: self.btor.clone(),

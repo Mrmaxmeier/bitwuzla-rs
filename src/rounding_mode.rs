@@ -24,7 +24,7 @@ impl RoundingMode {
             RoundingMode::RTP => BITWUZLA_RM_RTP,
             RoundingMode::RTZ => BITWUZLA_RM_RTZ,
         };
-        let node = unsafe { bitwuzla_mk_rm_value(btor.borrow().as_raw(), rm) };
+        let node = unsafe { bitwuzla_mk_rm_value( rm) };
         RoundingModeNode { btor, node }
     }
 }
@@ -38,17 +38,8 @@ impl RoundingMode {
 #[derive(PartialEq, Eq)]
 pub struct RoundingModeNode<R: Borrow<Bitwuzla> + Clone> {
     pub(crate) btor: R,
-    pub(crate) node: *const BitwuzlaTerm,
+    pub(crate) node: BitwuzlaTerm,
 }
-
-// According to
-// https://groups.google.com/forum/#!msg/boolector/itYGgJxU3mY/AC2O0898BAAJ,
-// the boolector library is thread-safe, meaning `*const BitwuzlaTerm` can be
-// both `Send` and `Sync`.
-// So as long as `R` is `Send` and/or `Sync`, we can mark `BV` as `Send` and/or
-// `Sync` respectively.
-unsafe impl<R: Borrow<Bitwuzla> + Clone + Send> Send for RoundingModeNode<R> {}
-unsafe impl<R: Borrow<Bitwuzla> + Clone + Sync> Sync for RoundingModeNode<R> {}
 
 impl<R: Borrow<Bitwuzla> + Clone> RoundingModeNode<R> {}
 
@@ -66,7 +57,7 @@ impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for RoundingModeNode<R> {
         let format = CString::new("smt2").unwrap();
         let string = crate::util::tmp_file_to_string(
             |tmpfile| unsafe {
-                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+                bitwuzla_term_print(self.node, tmpfile);
             },
             true,
         )

@@ -14,17 +14,8 @@ use std::fmt;
 #[derive(PartialEq, Eq)]
 pub struct Array<R: Borrow<Bitwuzla> + Clone> {
     pub(crate) btor: R,
-    pub(crate) node: *const BitwuzlaTerm,
+    pub(crate) node: BitwuzlaTerm,
 }
-
-// According to
-// https://groups.google.com/forum/#!msg/bitwuzla/itYGgJxU3mY/AC2O0898BAAJ,
-// the bitwuzla library is thread-safe, meaning `*mut BitwuzlaTerm` can be
-// both `Send` and `Sync`.
-// So as long as `R` is `Send` and/or `Sync`, we can mark `Array` as `Send`
-// and/or `Sync` respectively.
-unsafe impl<R: Borrow<Bitwuzla> + Clone + Send> Send for Array<R> {}
-unsafe impl<R: Borrow<Bitwuzla> + Clone + Sync> Sync for Array<R> {}
 
 impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// Create a new `Array` which maps `BV`s of width `index_width` to `BV`s of
@@ -64,7 +55,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// arr2.read(&four)._eq(&two).assert();
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// ```
-    pub fn new(btor: R, index_width: u32, element_width: u32, symbol: Option<&str>) -> Self {
+    pub fn new(btor: R, index_width: u64, element_width: u64, symbol: Option<&str>) -> Self {
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
@@ -72,7 +63,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
         let node = match symbol {
             None => unsafe {
                 bitwuzla_mk_const(
-                    btor.borrow().as_raw(),
                     array_sort.as_raw(),
                     std::ptr::null(),
                 )
@@ -80,7 +70,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const libc::c_char;
-                unsafe { bitwuzla_mk_const(btor.borrow().as_raw(), array_sort.as_raw(), symbol) }
+                unsafe { bitwuzla_mk_const(array_sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
@@ -100,7 +90,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// # use std::rc::Rc;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
-    /// btor.set_opt(BtorOption::Incremental(true));
     ///
     /// // `arr` is an `Array` which maps 8-bit values to 8-bit values.
     /// // It is initialized such that all entries are the constant `42`.
@@ -127,18 +116,18 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// //assert_eq!(read_bv.get_a_solution().as_u64().unwrap(), 42);
     /// ```
-    pub fn new_initialized(btor: R, index_width: u32, element_width: u32, val: &BV<R>) -> Self {
+    pub fn new_initialized(btor: R, index_width: u64, element_width: u64, val: &BV<R>) -> Self {
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
         let node = unsafe {
-            bitwuzla_mk_const_array(btor.borrow().as_raw(), array_sort.as_raw(), val.node)
+            bitwuzla_mk_const_array(array_sort.as_raw(), val.node)
         };
         Self { btor, node }
     }
 
     /// Get the bitwidth of the index type of the `Array`
-    pub fn get_index_width(&self) -> u32 {
+    pub fn get_index_width(&self) -> u64 {
         unsafe {
             let sort = bitwuzla_term_array_get_index_sort(self.node);
             // TODO: do we know if the sort is actually a bv?
@@ -147,7 +136,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     }
 
     /// Get the bitwidth of the element type of the `Array`
-    pub fn get_element_width(&self) -> u32 {
+    pub fn get_element_width(&self) -> u64 {
         unsafe {
             let sort = bitwuzla_term_array_get_element_sort(self.node);
             bitwuzla_sort_bv_get_size(sort)
@@ -181,7 +170,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term2(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_EQUAL,
                     self.node,
                     other.node,
@@ -196,7 +184,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term2(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_DISTINCT,
                     self.node,
                     other.node,
@@ -211,7 +198,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term2(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_ARRAY_SELECT,
                     self.node,
                     index.node,
@@ -227,7 +213,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term3(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_ARRAY_STORE,
                     self.node,
                     index.node,
@@ -252,7 +237,7 @@ impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for Array<R> {
         let format = CString::new("smt2").unwrap();
         let res = crate::util::tmp_file_to_string(
             |tmpfile| unsafe {
-                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+                bitwuzla_term_print(self.node, tmpfile);
             },
             true,
         )

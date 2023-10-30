@@ -16,7 +16,7 @@ macro_rules! unop {
         pub fn $f(&self) -> Self {
             Self {
                 btor: self.btor.clone(),
-                node: unsafe { bitwuzla_mk_term1(self.btor.borrow().as_raw(), $kind, self.node) },
+                node: unsafe { bitwuzla_mk_term1($kind, self.node) },
             }
         }
     };
@@ -30,7 +30,7 @@ macro_rules! unop_bv {
         pub fn $f(&self) -> BV<R> {
             BV {
                 btor: self.btor.clone(),
-                node: unsafe { bitwuzla_mk_term1(self.btor.borrow().as_raw(), $kind, self.node) },
+                node: unsafe { bitwuzla_mk_term1($kind, self.node) },
             }
         }
     };
@@ -44,7 +44,7 @@ macro_rules! binop {
         pub fn $f(&self, other: &Self) -> Self {
             Self {
                 btor: self.btor.clone(),
-                node:  unsafe { bitwuzla_mk_term2(self.btor.borrow().as_raw(), $kind, self.node, other.node) },
+                node:  unsafe { bitwuzla_mk_term2($kind, self.node, other.node) },
             }
         }
     };
@@ -58,7 +58,7 @@ macro_rules! binop_bv {
         pub fn $f(&self, other: &Self) -> BV<R> {
             BV {
                 btor: self.btor.clone(),
-                node:  unsafe { bitwuzla_mk_term2(self.btor.borrow().as_raw(), $kind, self.node, other.node) },
+                node:  unsafe { bitwuzla_mk_term2($kind, self.node, other.node) },
             }
         }
     };
@@ -73,7 +73,7 @@ macro_rules! ternop {
             let rm = rounding_mode.to_node(self.btor.clone());
             Self {
                 btor: self.btor.clone(),
-                node:  unsafe { bitwuzla_mk_term3(self.btor.borrow().as_raw(), $kind, rm.node, self.node, other.node) },
+                node:  unsafe { bitwuzla_mk_term3($kind, rm.node, self.node, other.node) },
             }
         }
     };
@@ -88,7 +88,7 @@ macro_rules! ternop {
 #[derive(PartialEq, Eq)]
 pub struct FP<R: Borrow<Bitwuzla> + Clone> {
     pub(crate) btor: R,
-    pub(crate) node: *const BitwuzlaTerm,
+    pub(crate) node: BitwuzlaTerm,
 }
 
 impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
@@ -118,16 +118,16 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     /// // let solution = fp.get_a_solution().as_u64().unwrap();
     /// // assert!(solution > 3);
     /// ```
-    pub fn new(btor: R, exp_width: u32, sig_width: u32, symbol: Option<&str>) -> Self {
+    pub fn new(btor: R, exp_width: u64, sig_width: u64, symbol: Option<&str>) -> Self {
         let sort = Sort::fp(btor.clone(), exp_width, sig_width);
         let node = match symbol {
             None => unsafe {
-                bitwuzla_mk_const(btor.borrow().as_raw(), sort.as_raw(), std::ptr::null())
+                bitwuzla_mk_const(sort.as_raw(), std::ptr::null())
             },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { bitwuzla_mk_const(btor.borrow().as_raw(), sort.as_raw(), symbol) }
+                unsafe { bitwuzla_mk_const( sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
@@ -184,7 +184,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
             let format = CString::new("smt2").unwrap();
             let string = crate::util::tmp_file_to_string(
                 |tmpfile| unsafe {
-                    bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+                    bitwuzla_term_print(self.node, tmpfile);
                 },
                 false,
             );
@@ -274,7 +274,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     binop_bv!(
         /// Floating-point equality. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
-        => _eq, BITWUZLA_KIND_FP_EQ
+        => _eq, BITWUZLA_KIND_FP_EQUAL
     );
 
     binop!(
@@ -362,7 +362,6 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term2(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_FP_RTI,
                     rm.node,
                     self.node,
@@ -381,13 +380,12 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         => sub, BITWUZLA_KIND_FP_SUB
     );
 
-    pub fn to_sbv(&self, width: u32) -> BV<R> {
+    pub fn to_sbv(&self, width: u64) -> BV<R> {
         // TODO: assert width?
         BV {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term1_indexed1(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_FP_TO_SBV,
                     self.node,
                     width,
@@ -396,13 +394,12 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         }
     }
 
-    pub fn to_ubv(&self, width: u32) -> BV<R> {
+    pub fn to_ubv(&self, width: u64) -> BV<R> {
         // TODO: assert width?
         BV {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term1_indexed1(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_FP_TO_UBV,
                     self.node,
                     width,
@@ -419,12 +416,11 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         self.to_fp(11, 52 + 1)
     }
 
-    pub fn to_fp(&self, exp_width: u32, sig_width: u32) -> FP<R> {
+    pub fn to_fp(&self, exp_width: u64, sig_width: u64) -> FP<R> {
         FP {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term1_indexed2(
-                    self.btor.borrow().as_raw(),
                     BITWUZLA_KIND_FP_TO_FP_FROM_FP,
                     self.node,
                     exp_width,
@@ -449,7 +445,7 @@ impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for FP<R> {
         let format = CString::new("smt2").unwrap();
         let string = crate::util::tmp_file_to_string(
             |tmpfile| unsafe {
-                bitwuzla_term_dump(self.node, format.as_ptr(), tmpfile);
+                bitwuzla_term_print(self.node, tmpfile);
             },
             true,
         )

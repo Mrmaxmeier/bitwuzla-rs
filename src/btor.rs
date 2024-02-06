@@ -1,25 +1,17 @@
-use crate::option::BtorOption;
-use crate::option::*;
-use crate::timeout::{self, TimeoutState};
 use crate::{Array, BV};
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
 use std::fmt;
-use std::os::raw::{c_char, c_void};
-use std::pin::Pin;
 
 /// A `Btor` represents an instance of the bitwuzla solver.
 /// Each `BV` and `Array` is created in a particular `Btor` instance.
 pub struct Bitwuzla {
-    options: crate::BitwuzlaOptions,
     btor: *mut bitwuzla_sys::Bitwuzla,
-    pub(crate) timeout_state: Pin<Box<timeout::TimeoutState>>, // needs to be `Pin`, because the bitwuzla callback will expect to continue to find the `TimeoutState` at the same location
 }
 pub type Btor = Bitwuzla;
 
 // Two `Btor`s are equal if they have the same underlying Btor pointer.
-// We disregard the `timeout_state` for this purpose.
 impl PartialEq for Bitwuzla {
     fn eq(&self, other: &Self) -> bool {
         self.btor == other.btor
@@ -40,21 +32,20 @@ impl fmt::Debug for Bitwuzla {
 
 impl Bitwuzla {
     /// Create a new `Bitwuzla` instance with no variables and no constraints.
+    ///
+    /// TODO: document bitwuzlaoptions, note that this defaults to model gen
     pub fn new() -> Self {
-        Self::new_from_options(crate::BitwuzlaOptions::new())
+        crate::BitwuzlaOptions::new().with_model_gen().build()
     }
 
-    /// Create a new `Bitwuzla` instance with no variables and no constraints.
-    pub fn new_from_options(options: crate::BitwuzlaOptions) -> Self {
+    pub fn builder() -> crate::BitwuzlaOptions {
+        crate::BitwuzlaOptions::new()
+    }
+
+    pub(crate) fn new_from_options(mut options: crate::BitwuzlaOptions) -> Self {
         Self {
             btor: unsafe { bitwuzla_new(options.as_raw()) },
-            timeout_state: Pin::new(Box::new(timeout::TimeoutState::new())),
-            options,
         }
-    }
-
-    pub fn set_opt(&self, opt: BtorOption) {
-        self.options.set_opt(opt);
     }
 
     pub(crate) fn as_raw(&self) -> *mut bitwuzla_sys::Bitwuzla {
@@ -73,21 +64,19 @@ impl Bitwuzla {
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
+    /// let btor = Btor::new();
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
-    /// let foo = BV::new(btor.clone(), 8, Some("foo"));
+    /// let foo = BV::new(&btor, 8, Some("foo"));
     ///
     /// // Assert that "foo" must be greater than `3`
-    /// foo.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// foo.ugt(&BV::from_u32(&btor, 3, 8)).assert();
     ///
     /// // This state is satisfiable
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     ///
     /// // Assert that "foo" must also be less than `2`
-    /// foo.ult(&BV::from_u32(btor.clone(), 2, 8)).assert();
+    /// foo.ult(&BV::from_u32(&btor, 2, 8)).assert();
     ///
     /// // State is now unsatisfiable
     /// assert_eq!(btor.sat(), SolverResult::Unsat);
@@ -97,26 +86,49 @@ impl Bitwuzla {
     /// # use std::time::Duration;
     /// let btor = Rc::new(Btor::new());
     /// btor.set_opt(BtorOption::SolverTimeout(Some(Duration::from_secs(200))));
-    /// let foo = BV::new(btor.clone(), 8, Some("foo"));
-    /// foo.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// let foo = BV::new(&btor, 8, Some("foo"));
+    /// foo.ugt(&BV::from_u32(&btor, 3, 8)).assert();
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     ///
     /// // But, if we make the second assertion and then set the solver timeout to
     /// // something extremely low (say, 2 ns), we'll get `SolverResult::Unknown`
-    /// foo.ugt(&BV::from_u32(btor.clone(), 5, 8)).assert();
+    /// foo.ugt(&BV::from_u32(&btor, 5, 8)).assert();
     /// btor.set_opt(BtorOption::SolverTimeout(Some(Duration::from_nanos(2))));
     /// assert_eq!(btor.sat(), SolverResult::Unknown);
     /// ```
     pub fn sat(&self) -> SolverResult {
-        self.timeout_state.restart_timer();
         let result = unsafe { bitwuzla_check_sat(self.as_raw()) };
         SolverResult::from_raw(result)
     }
 
-    pub fn check_sat_assuming<R: Borrow<Bitwuzla> + Clone>(&self, assumptions: &[crate::Bool<R>]) -> SolverResult {
-        self.timeout_state.restart_timer();
+    /// TODO
+    /// ```
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// let btor = Btor::new();
+    ///
+    /// // An 8-bit unconstrained `BV` with the symbol "foo"
+    /// let foo = BV::new(&btor, 8, Some("foo"));
+    /// let is_42 = foo._eq(&BV::from_u32(&btor, 42, 8));
+    /// let is_127 = foo._eq(&BV::from_u32(&btor, 127, 8));
+    ///
+    /// assert_eq!(btor.check_sat_assuming(&[is_42.clone()]), SolverResult::Sat);
+    /// assert_eq!(foo.get_a_solution().as_u64().unwrap(), 42);
+    /// assert_eq!(btor.check_sat_assuming(&[is_127.clone()]), SolverResult::Sat);
+    /// assert_eq!(foo.get_a_solution().as_u64().unwrap(), 127);
+    /// assert_eq!(btor.check_sat_assuming(&[is_42, is_127]), SolverResult::Unsat);
+    /// ```
+    pub fn check_sat_assuming<R: Borrow<Bitwuzla> + Clone>(
+        &self,
+        assumptions: &[crate::Bool<R>],
+    ) -> SolverResult {
         let assumptions = assumptions.iter().map(|x| x.node).collect::<Vec<_>>();
-        let result = unsafe { bitwuzla_check_sat_assuming(self.as_raw(), assumptions.len() as u32, assumptions.as_ptr() as *mut _) };
+        let result = unsafe {
+            bitwuzla_check_sat_assuming(
+                self.as_raw(),
+                assumptions.len() as u32,
+                assumptions.as_ptr() as *mut _,
+            )
+        };
         SolverResult::from_raw(result)
     }
 
@@ -239,19 +251,6 @@ impl Bitwuzla {
         // unsafe { bitwuzla_reset_assumptions(self.as_raw()) }
     }
 
-    /// Reset all statistics other than time statistics
-    pub fn reset_stats(&self) {
-        todo!()
-        // unsafe { bitwuzla_reset_stats(self.as_raw()) }
-    }
-
-    /// Reset time statistics
-    pub fn reset_time(&self) {
-        // No-op. Time is reset when solving anyways?
-        // todo!()
-        // unsafe { bitwuzla_reset_time(self.as_raw()) }
-    }
-
     /// Get a `String` describing the current constraints
     pub fn print_constraints(&self) -> String {
         let format = CString::new("smt2").unwrap();
@@ -280,6 +279,15 @@ impl Bitwuzla {
         )
          */
         todo!()
+    }
+
+    /// Simplify the current input formula.
+    ///
+    /// NOTE: Each call to `sat()` and `check_sat_assuming()`
+    ///       simplifies the input formula as a preprocessing step. It is not
+    ///       necessary to call this function explicitly in the general case.
+    pub fn simplify(&self) {
+        unsafe { bitwuzla_simplify(self.as_raw()) };
     }
 
     /// Get bitwuzla's version string
@@ -327,9 +335,7 @@ impl SolverResult {
     }
 
     pub fn to_string(&self) -> String {
-        let cstr = unsafe {
-            CStr::from_ptr(bitwuzla_sys::bitwuzla_result_to_string(*self as u32))
-        };
+        let cstr = unsafe { CStr::from_ptr(bitwuzla_sys::bitwuzla_result_to_string(*self as u32)) };
         cstr.to_str().unwrap().to_owned()
     }
 }

@@ -52,9 +52,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     pub fn new(btor: R, symbol: Option<&str>) -> Self {
         let sort = Sort::bool(btor.clone());
         let node = match symbol {
-            None => unsafe {
-                bitwuzla_mk_const(sort.as_raw(), std::ptr::null())
-            },
+            None => unsafe { bitwuzla_mk_const(sort.as_raw(), std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
@@ -78,7 +76,10 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     /// Create a one-bit-wide bitvector from this boolean.
     pub fn to_bv(&self) -> BV<R> {
         // TODO: there should be/is a better way!
-        self.cond_bv(&BV::from_bool(self.btor.clone(), true), &BV::from_bool(self.btor.clone(), false))
+        self.cond_bv(
+            &BV::from_bool(self.btor.clone(), true),
+            &BV::from_bool(self.btor.clone(), false),
+        )
     }
 
     pub fn uext(&self, n: u64) -> BV<R> {
@@ -100,12 +101,8 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     ///
     /// For a code example, see [`BV::new()`](struct.BV.html#method.new).
     pub fn get_a_solution(&self) -> bool {
-        let bv_val = unsafe {
-            bitwuzla_get_value(self.btor.borrow().as_raw(), self.node)
-        };
-        unsafe {
-            bitwuzla_term_value_get_bool(bv_val)
-        }
+        let bv_val = unsafe { bitwuzla_get_value(self.btor.borrow().as_raw(), self.node) };
+        unsafe { bitwuzla_term_value_get_bool(bv_val) }
     }
 
     /// Get the `Btor` which this `BV` belongs to
@@ -157,19 +154,16 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV, Bool, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Btor::new();
     ///
     /// // Create an unconstrained `BV`
-    /// let bv = BV::new(btor.clone(), 8, Some("foo"));
+    /// let bv = BV::new(&btor, 8, Some("foo"));
     ///
     /// // Assert that it must be greater than `3`
-    /// bv.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// bv.ugt(&BV::from_u32(&btor, 3, 8)).assert();
     ///
     /// // (you may prefer this alternate style for assertions)
-    /// Bool::assert(&bv.ugt(&BV::from_u32(btor.clone(), 3, 8)));
+    /// Bool::assert(&bv.ugt(&BV::from_u32(&btor, 3, 8)));
     ///
     /// // The state is satisfiable, and any solution we get
     /// // for `bv` must be greater than `3`
@@ -178,7 +172,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     /// assert!(solution > 3);
     ///
     /// // Now we assert that `bv` must be less than `2`
-    /// bv.ult(&BV::from_u32(btor.clone(), 2, 8)).assert();
+    /// bv.ult(&BV::from_u32(&btor, 2, 8)).assert();
     ///
     /// // The state is now unsatisfiable
     /// assert_eq!(btor.sat(), SolverResult::Unsat);
@@ -197,7 +191,6 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
         /// `self` and `other` must have bitwidth 1.
         => implies, BITWUZLA_KIND_IMPLIES
     );
-
 
     unop!(
         /// Bitwise `not` operation (one's complement)
@@ -219,30 +212,25 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     /// Create an if-then-else `BV` node.
     /// If `self` is true, then `truebv` is returned, else `falsebv` is returned.
     ///
-    /// `self` must have bitwidth 1.
-    ///
     /// # Example
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV, Bool, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Btor::new();
     ///
     /// // Create an unconstrained `BV` `x`
-    /// let x = BV::new(btor.clone(), 8, Some("x"));
+    /// let x = BV::new(&btor, 8, Some("x"));
     ///
     /// // `y` will be `5` if `x > 10`, else it will be `1`
-    /// let five = BV::from_u32(btor.clone(), 5, 8);
-    /// let one = BV::one(btor.clone(), 8);
-    /// let cond = x.ugt(&BV::from_u32(btor.clone(), 10, 8));
+    /// let five = BV::from_u32(&btor, 5, 8);
+    /// let one = BV::one(&btor, 8);
+    /// let cond = x.ugt(&BV::from_u32(&btor, 10, 8));
     /// let y = cond.cond_bv(&five, &one);
     /// // (you may prefer this alternate style)
     /// let _y = Bool::cond_bv(&cond, &five, &one);
     ///
     /// // Now assert that `x < 7`
-    /// x.ult(&BV::from_u32(btor.clone(), 7, 8)).assert();
+    /// x.ult(&BV::from_u32(&btor, 7, 8)).assert();
     ///
     /// // As a result, `y` must be `1`
     /// assert_eq!(btor.sat(), SolverResult::Sat);
@@ -252,12 +240,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
         BV {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term3(
-                    BITWUZLA_KIND_ITE,
-                    self.node,
-                    truebv.node,
-                    falsebv.node,
-                )
+                bitwuzla_mk_term3(BITWUZLA_KIND_ITE, self.node, truebv.node, falsebv.node)
             },
         }
     }
@@ -288,14 +271,38 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
         FP {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term3(
-                    BITWUZLA_KIND_ITE,
-                    self.node,
-                    true_fp.node,
-                    false_fp.node,
-                )
+                bitwuzla_mk_term3(BITWUZLA_KIND_ITE, self.node, true_fp.node, false_fp.node)
             },
         }
+    }
+
+    /// Returns true if this node is an assumption that forced the input formula
+    /// to become unsatisfiable.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use bitwuzla::{Btor, BV, SolverResult};
+    /// # use std::rc::Rc;
+    /// let btor = Rc::new(Btor::builder().produce_unsat_assumptions(true).build());
+    ///
+    /// // Create an unconstrained `BV` and assert that it is greater
+    /// // than `3`; the state is satisfiable
+    /// let bv = BV::new(btor.clone(), 8, Some("foo"));
+    /// bv.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// assert_eq!(btor.sat(), SolverResult::Sat);
+    ///
+    /// // Assert that the `BV` is less than `2`
+    /// let assumption = bv.ult(&BV::from_u32(btor.clone(), 2, 8));
+    /// assumption.assert();
+    ///
+    /// // The state is now unsatisfiable, and `assumption` is a
+    /// // failed assumption
+    /// assert_eq!(btor.sat(), SolverResult::Unsat);
+    /// assert!(assumption.is_failed_assumption());
+    /// ```
+    pub fn is_failed_assumption(&self) -> bool {
+        unsafe { bitwuzla_is_unsat_assumption(self.btor.borrow().as_raw(), self.node) }
     }
 }
 

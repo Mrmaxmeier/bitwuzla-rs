@@ -24,7 +24,7 @@ impl RoundingMode {
             RoundingMode::RTP => BITWUZLA_RM_RTP,
             RoundingMode::RTZ => BITWUZLA_RM_RTZ,
         };
-        let node = unsafe { bitwuzla_mk_rm_value( rm) };
+        let node = unsafe { bitwuzla_mk_rm_value(rm) };
         RoundingModeNode { btor, node }
     }
 }

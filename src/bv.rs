@@ -1,6 +1,6 @@
 use crate::btor::Bitwuzla;
 use crate::sort::Sort;
-use crate::{Array, FP, Bool};
+use crate::{Array, Bool, FP};
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
@@ -82,17 +82,14 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// ```
     /// # use bitwuzla::{Bitwuzla, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Bitwuzla::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Bitwuzla::new();
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
-    /// let bv = BV::new(btor.clone(), 8, Some("foo"));
+    /// let bv = BV::new(&btor, 8, Some("foo"));
     /// assert_eq!(format!("{:?}", bv), "(declare-const foo (_ BitVec 8))");
     ///
     /// // Assert that it must be greater than `3`
-    /// bv.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// bv.ugt(&BV::from_u32(&btor, 3, 8)).assert();
     ///
     /// // Now any solution must give it a value greater than `3`
     /// assert_eq!(btor.sat(), SolverResult::Sat);
@@ -102,9 +99,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     pub fn new(btor: R, width: u64, symbol: Option<&str>) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         let node = match symbol {
-            None => unsafe {
-                bitwuzla_mk_const(sort.as_raw(), std::ptr::null())
-            },
+            None => unsafe { bitwuzla_mk_const(sort.as_raw(), std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
@@ -125,13 +120,10 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
 
     /// Create a new constant `BV` representing the given signed integer.
     /// The new `BV` will have the width `width`, which must not be 0.
-    pub fn from_i32(btor: R, i: i32, width: u64) -> Self {
-        // TODO: how to handle sign extend?
+    pub fn from_i32(btor: R, val: i32, width: u64) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe {
-                bitwuzla_mk_bv_value_uint64(sort.as_raw(), i as u32 as u64)
-            },
+            node: unsafe { bitwuzla_mk_bv_value_int64(sort.as_raw(), val as i64) },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -143,30 +135,18 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     pub fn from_u32(btor: R, u: u32, width: u64) -> Self {
         let sort = Sort::bitvector(btor.clone(), width);
         Self {
-            node: unsafe {
-                bitwuzla_mk_bv_value_uint64(sort.as_raw(), u as u64)
-            },
+            node: unsafe { bitwuzla_mk_bv_value_uint64(sort.as_raw(), u as u64) },
             btor, // out of order so it can be used above but moved in here
         }
     }
 
     /// Create a new constant `BV` representing the given signed integer.
     /// The new `BV` will have the width `width`, which must not be 0.
-    pub fn from_i64(btor: R, i: i64, width: u64) -> Self {
-        let low_bits = (i & 0xFFFF_FFFF) as i32;
-        let high_bits = (i >> 32) as i32;
-        if width <= 32 {
-            Self::from_i32(btor, low_bits, width)
-        } else {
-            let bv64 = Self::from_i32(btor.clone(), high_bits, 32)
-                .concat(&Self::from_i32(btor, low_bits, 32));
-            if width < 64 {
-                bv64.slice(width - 1, 0)
-            } else if width == 64 {
-                bv64
-            } else {
-                bv64.sext(width - 64)
-            }
+    pub fn from_i64(btor: R, val: i64, width: u64) -> Self {
+        let sort = Sort::bitvector(btor.clone(), width);
+        Self {
+            node: unsafe { bitwuzla_mk_bv_value_int64(sort.as_raw(), val) },
+            btor, // out of order so it can be used above but moved in here
         }
     }
 
@@ -187,11 +167,9 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
-    /// let zero = BV::zero(btor.clone(), 8);
+    /// let btor = Btor::new();
+    /// let zero = BV::zero(&btor, 8);
     /// assert_eq!(zero.as_u64().unwrap(), 0);
     /// ```
     pub fn zero(btor: R, width: u64) -> Self {
@@ -252,13 +230,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         let sort = Sort::bitvector(btor.clone(), bits.len() as u64);
         let cstring = CString::new(bits).unwrap();
         Self {
-            node: unsafe {
-                bitwuzla_mk_bv_value(
-                    sort.as_raw(),
-                    cstring.as_ptr(),
-                    2,
-                )
-            },
+            node: unsafe { bitwuzla_mk_bv_value(sort.as_raw(), cstring.as_ptr(), 2) },
             btor, // out of order so it can be used above but moved in here
         }
     }
@@ -271,11 +243,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         let cstring = CString::new(num).unwrap();
         Self {
             node: unsafe {
-                bitwuzla_mk_bv_value(
-                    sort.as_raw(),
-                    cstring.as_ptr() as *const c_char,
-                    10,
-                )
+                bitwuzla_mk_bv_value(sort.as_raw(), cstring.as_ptr() as *const c_char, 10)
             },
             btor, // out of order so it can be used above but moved in here
         }
@@ -289,11 +257,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         let cstring = CString::new(num).unwrap();
         Self {
             node: unsafe {
-                bitwuzla_mk_bv_value(
-                    sort.as_raw(),
-                    cstring.as_ptr() as *const c_char,
-                    16,
-                )
+                bitwuzla_mk_bv_value(sort.as_raw(), cstring.as_ptr() as *const c_char, 16)
             },
             btor, // out of order so it can be used above but moved in here
         }
@@ -413,12 +377,8 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// For a code example, see [`BV::new()`](struct.BV.html#method.new).
     pub fn get_a_solution(&self) -> BVSolution {
-        let bv_val = unsafe {
-            bitwuzla_get_value(self.btor.borrow().as_raw(), self.node)
-        };
-        let bv_str = unsafe {
-            bitwuzla_term_value_get_str(bv_val)
-        };
+        let bv_val = unsafe { bitwuzla_get_value(self.btor.borrow().as_raw(), self.node) };
+        let bv_str = unsafe { bitwuzla_term_value_get_str(bv_val) };
         BVSolution::from_raw(bv_str)
     }
 
@@ -471,27 +431,30 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
+    /// # use bitwuzla::option::ModelGen;
+    /// let btor = Btor::builder().model_gen(ModelGen::All).build();
     ///
     /// // This `BV` is constant
-    /// let five = BV::from_u32(btor.clone(), 5, 8);
+    /// let five = BV::from_u32(&btor, 5, 8);
     /// assert!(five.is_const());
     ///
     /// // This `BV` is not constant
-    /// let unconstrained = BV::new(btor.clone(), 8, Some("foo"));
+    /// let unconstrained = BV::new(&btor, 8, Some("foo"));
     /// assert!(!unconstrained.is_const());
     ///
     /// // 5 + [unconstrained] is also not constant
     /// let sum = five.add(&unconstrained);
     /// assert!(!sum.is_const());
     ///
-    /// // But 5 + 5 is constant
+    /// // Note that 5 + 5 is not considered a constant
     /// let sum = five.add(&five);
-    /// assert!(sum.is_const());
+    /// assert!(!sum.is_const());
     /// ```
     pub fn is_const(&self) -> bool {
-        unsafe { bitwuzla_term_is_value(self.node) }
+        // let node = unsafe { bitwuzla_get_value(self.btor.borrow().as_raw(), self.node)};
+        unsafe {
+            bitwuzla_term_is_value(self.node)
+        }
     }
 
     /// Does `self` have the same width as `other`?
@@ -505,19 +468,16 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// ```
     /// # use bitwuzla::{Btor, Bool, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Btor::new();
     ///
     /// // Create an unconstrained `BV`
-    /// let bv = BV::new(btor.clone(), 8, Some("foo"));
+    /// let bv = BV::new(&btor, 8, Some("foo"));
     ///
     /// // Assert that it must be greater than `3`
-    /// bv.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// bv.ugt(&BV::from_u32(&btor, 3, 8)).assert();
     ///
     /// // (you may prefer this alternate style for assertions)
-    /// Bool::assert(&bv.ugt(&BV::from_u32(btor.clone(), 3, 8)));
+    /// Bool::assert(&bv.ugt(&BV::from_u32(&btor, 3, 8)));
     ///
     /// // The state is satisfiable, and any solution we get
     /// // for `bv` must be greater than `3`
@@ -526,7 +486,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     /// assert!(solution > 3);
     ///
     /// // Now we assert that `bv` must be less than `2`
-    /// bv.ult(&BV::from_u32(btor.clone(), 2, 8)).assert();
+    /// bv.ult(&BV::from_u32(&btor, 2, 8)).assert();
     ///
     /// // The state is now unsatisfiable
     /// assert_eq!(btor.sat(), SolverResult::Unsat);
@@ -534,36 +494,6 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     pub fn assert(&self) {
         let zero = Self::from_u32(self.btor.clone(), 0, self.get_width());
         self._ne(&zero).assert();
-    }
-
-    /// Returns true if this node is an assumption that forced the input formula
-    /// to become unsatisfiable.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use bitwuzla::{Btor, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    ///
-    /// // Create an unconstrained `BV` and assert that it is greater
-    /// // than `3`; the state is satisfiable
-    /// let bv = BV::new(btor.clone(), 8, Some("foo"));
-    /// bv.ugt(&BV::from_u32(btor.clone(), 3, 8)).assert();
-    /// assert_eq!(btor.sat(), SolverResult::Sat);
-    ///
-    /// // Temporarily assume that the `BV` is less than `2`
-    /// let assumption = bv.ult(&BV::from_u32(btor.clone(), 2, 8));
-    /// assumption.assume();
-    ///
-    /// // The state is now unsatisfiable, and `assumption` is a
-    /// // failed assumption
-    /// assert_eq!(btor.sat(), SolverResult::Unsat);
-    /// assert!(assumption.is_failed_assumption());
-    /// ```
-    pub fn is_failed_assumption(&self) -> bool {
-        unsafe { bitwuzla_is_unsat_assumption(self.btor.borrow().as_raw(), self.node) }
     }
 
     binop_cmp!(
@@ -804,13 +734,10 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Btor::new();
     ///
     /// // Create an 8-bit `BV` with value `3`
-    /// let bv = BV::from_u32(btor.clone(), 3, 8);
+    /// let bv = BV::from_u32(&btor, 3, 8);
     ///
     /// // Zero-extend by 56 bits
     /// let extended = bv.uext(56);
@@ -822,13 +749,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     pub fn uext(&self, n: u64) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term1_indexed1(
-                    BITWUZLA_KIND_BV_ZERO_EXTEND,
-                    self.node,
-                    n,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term1_indexed1(BITWUZLA_KIND_BV_ZERO_EXTEND, self.node, n) },
         }
     }
 
@@ -855,13 +776,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     pub fn sext(&self, n: u64) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term1_indexed1(
-                    BITWUZLA_KIND_BV_SIGN_EXTEND,
-                    self.node,
-                    n,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term1_indexed1(BITWUZLA_KIND_BV_SIGN_EXTEND, self.node, n) },
         }
     }
 
@@ -902,12 +817,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         Self {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term1_indexed2(
-                    BITWUZLA_KIND_BV_EXTRACT,
-                    self.node,
-                    high,
-                    low,
-                )
+                bitwuzla_mk_term1_indexed2(BITWUZLA_KIND_BV_EXTRACT, self.node, high, low)
             },
         }
     }
@@ -945,13 +855,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     pub fn repeat(&self, n: u64) -> Self {
         Self {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term1_indexed1(
-                    BITWUZLA_KIND_BV_REPEAT,
-                    self.node,
-                    n,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term1_indexed1(BITWUZLA_KIND_BV_REPEAT, self.node, n) },
         }
     }
 
@@ -1035,17 +939,14 @@ impl BVSolution {
     ///
     /// ```
     /// # use bitwuzla::{Btor, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Btor::new();
     ///
     /// // `bv` starts as an unconstrained 8-bit value
-    /// let bv = BV::new(btor.clone(), 8, Some("foo"));
+    /// let bv = BV::new(&btor, 8, Some("foo"));
     ///
     /// // assert that the first two digits of `bv` are 0
-    /// let mask = BV::from_u32(btor.clone(), 0b11000000, 8);
-    /// let zero = BV::zero(btor.clone(), 8);
+    /// let mask = BV::from_u32(&btor, 0b11000000, 8);
+    /// let zero = BV::zero(&btor, 8);
     /// bv.and(&mask)._eq(&zero).assert();
     ///
     /// // `as_01x_str()` gives an 8-character string whose first

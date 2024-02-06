@@ -30,16 +30,15 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     ///
     /// ```
     /// # use bitwuzla::{Array, Btor, BV, SolverResult};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
+    /// let btor = Btor::new();
     ///
     /// // `arr` is an `Array` which maps 8-bit values to 8-bit values
-    /// let arr = Array::new(btor.clone(), 8, 8, Some("arr"));
+    /// let arr = Array::new(&btor, 8, 8, Some("arr"));
     /// assert_eq!(format!("{:?}", arr), "(declare-const arr (Array (_ BitVec 8) (_ BitVec 8)))");
     ///
     /// // Write the value `3` to array index `7`
-    /// let three = BV::from_u32(btor.clone(), 3, 8);
-    /// let seven = BV::from_u32(btor.clone(), 7, 8);
+    /// let three = BV::from_u32(&btor, 3, 8);
+    /// let seven = BV::from_u32(&btor, 7, 8);
     /// let arr2 = arr.write(&seven, &three);
     ///
     /// // Read back out the resulting value
@@ -49,8 +48,8 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// assert_eq!(read_bv.as_u64().unwrap(), 3);
     ///
     /// // Reading other indices should return a unconstrained values.
-    /// let two = BV::from_u32(btor.clone(), 2, 8);
-    /// let four = BV::from_u32(btor.clone(), 4, 8);
+    /// let two = BV::from_u32(&btor, 2, 8);
+    /// let four = BV::from_u32(&btor, 4, 8);
     /// arr2.read(&two)._eq(&four).assert();
     /// arr2.read(&four)._eq(&two).assert();
     /// assert_eq!(btor.sat(), SolverResult::Sat);
@@ -61,12 +60,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
 
         let node = match symbol {
-            None => unsafe {
-                bitwuzla_mk_const(
-                    array_sort.as_raw(),
-                    std::ptr::null(),
-                )
-            },
+            None => unsafe { bitwuzla_mk_const(array_sort.as_raw(), std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const libc::c_char;
@@ -86,25 +80,23 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     ///
     /// ```
     /// # use bitwuzla::{Array, Btor, BV, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
     /// # use std::rc::Rc;
-    /// let btor = Rc::new(Btor::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Btor::new();
     ///
     /// // `arr` is an `Array` which maps 8-bit values to 8-bit values.
     /// // It is initialized such that all entries are the constant `42`.
-    /// let fortytwo = BV::from_u32(btor.clone(), 42, 8);
-    /// let arr = Array::new_initialized(btor.clone(), 8, 8, &fortytwo);
+    /// let fortytwo = BV::from_u32(&btor, 42, 8);
+    /// let arr = Array::new_initialized(&btor, 8, 8, &fortytwo);
     /// assert_eq!(format!("{:?}", arr), "((as const (Array (_ BitVec 8) (_ BitVec 8))) #b00101010)");
     ///
     /// // Reading the value at any index should produce `42`.
-    /// let read_bv = arr.read(&BV::from_u32(btor.clone(), 61, 8));
+    /// let read_bv = arr.read(&BV::from_u32(&btor, 61, 8));
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// assert_eq!(read_bv.get_a_solution().as_u64().unwrap(), 42);
     ///
     /// // Write the value `3` to array index `7`
-    /// let three = BV::from_u32(btor.clone(), 3, 8);
-    /// let seven = BV::from_u32(btor.clone(), 7, 8);
+    /// let three = BV::from_u32(&btor, 3, 8);
+    /// let seven = BV::from_u32(&btor, 7, 8);
     /// let arr2 = arr.write(&seven, &three);
     ///
     /// // Read back out the value at index `7`. It should be `3`.
@@ -112,7 +104,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// assert_eq!(read_bv.as_u64().unwrap(), 3);
     ///
     /// // Reading the value at any other index should still produce `42`.
-    /// let read_bv = arr2.read(&BV::from_u32(btor.clone(), 99, 8));
+    /// let read_bv = arr2.read(&BV::from_u32(&btor, 99, 8));
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// //assert_eq!(read_bv.get_a_solution().as_u64().unwrap(), 42);
     /// ```
@@ -120,9 +112,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
-        let node = unsafe {
-            bitwuzla_mk_const_array(array_sort.as_raw(), val.node)
-        };
+        let node = unsafe { bitwuzla_mk_const_array(array_sort.as_raw(), val.node) };
         Self { btor, node }
     }
 
@@ -168,13 +158,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     pub fn _eq(&self, other: &Array<R>) -> BV<R> {
         BV {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term2(
-                    BITWUZLA_KIND_EQUAL,
-                    self.node,
-                    other.node,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_EQUAL, self.node, other.node) },
         }
     }
 
@@ -182,13 +166,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     pub fn _ne(&self, other: &Array<R>) -> BV<R> {
         BV {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term2(
-                    BITWUZLA_KIND_DISTINCT,
-                    self.node,
-                    other.node,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_DISTINCT, self.node, other.node) },
         }
     }
 
@@ -196,13 +174,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     pub fn read(&self, index: &BV<R>) -> BV<R> {
         BV {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term2(
-                    BITWUZLA_KIND_ARRAY_SELECT,
-                    self.node,
-                    index.node,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_ARRAY_SELECT, self.node, index.node) },
         }
     }
 
@@ -212,12 +184,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
         Self {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term3(
-                    BITWUZLA_KIND_ARRAY_STORE,
-                    self.node,
-                    index.node,
-                    value.node,
-                )
+                bitwuzla_mk_term3(BITWUZLA_KIND_ARRAY_STORE, self.node, index.node, value.node)
             },
         }
     }

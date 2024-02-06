@@ -2,6 +2,7 @@ use crate::btor::Bitwuzla;
 use crate::sort::Sort;
 use crate::RoundingMode;
 use crate::BV;
+use crate::Bool;
 use bitwuzla_sys::*;
 use std::borrow::Borrow;
 use std::ffi::CString;
@@ -24,11 +25,11 @@ macro_rules! unop {
 
 // The attr:meta stuff is so that doc comments work correctly.
 // See https://stackoverflow.com/questions/41361897/documenting-a-function-created-with-a-macro-in-rust
-macro_rules! unop_bv {
+macro_rules! unop_cmp {
     ( $(#[$attr:meta])* => $f:ident, $kind:ident ) => {
         $(#[$attr])*
-        pub fn $f(&self) -> BV<R> {
-            BV {
+        pub fn $f(&self) -> Bool<R> {
+            Bool {
                 btor: self.btor.clone(),
                 node: unsafe { bitwuzla_mk_term1($kind, self.node) },
             }
@@ -52,11 +53,11 @@ macro_rules! binop {
 
 // The attr:meta stuff is so that doc comments work correctly.
 // See https://stackoverflow.com/questions/41361897/documenting-a-function-created-with-a-macro-in-rust
-macro_rules! binop_bv {
+macro_rules! binop_cmp {
     ( $(#[$attr:meta])* => $f:ident, $kind:ident ) => {
         $(#[$attr])*
-        pub fn $f(&self, other: &Self) -> BV<R> {
-            BV {
+        pub fn $f(&self, other: &Self) -> Bool<R> {
+            Bool {
                 btor: self.btor.clone(),
                 node:  unsafe { bitwuzla_mk_term2($kind, self.node, other.node) },
             }
@@ -101,17 +102,14 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     ///
     /// ```
     /// # use bitwuzla::{Bitwuzla, FP, SolverResult};
-    /// # use bitwuzla::option::{BtorOption, ModelGen};
-    /// # use std::rc::Rc;
-    /// let btor = Rc::new(Bitwuzla::new());
-    /// btor.set_opt(BtorOption::ModelGen(ModelGen::All));
+    /// let btor = Bitwuzla::new();
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
-    /// let fp = FP::new(btor.clone(), 8, 23, Some("foo"));
+    /// let fp = FP::new(&btor, 8, 23, Some("foo"));
     /// assert_eq!(format!("{:?}", fp), "(declare-const foo (_ FloatingPoint 8 23))");
     ///
     /// // Assert that it must be greater than `3`
-    /// // fp.gt(&BV::from_u32(btor.clone(), 3, 8)).assert();
+    /// // fp.gt(&BV::from_u32(&btor, 3, 8)).assert();
     ///
     /// // Now any solution must give it a value greater than `3`
     /// assert_eq!(btor.sat(), SolverResult::Sat);
@@ -121,13 +119,11 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     pub fn new(btor: R, exp_width: u64, sig_width: u64, symbol: Option<&str>) -> Self {
         let sort = Sort::fp(btor.clone(), exp_width, sig_width);
         let node = match symbol {
-            None => unsafe {
-                bitwuzla_mk_const(sort.as_raw(), std::ptr::null())
-            },
+            None => unsafe { bitwuzla_mk_const(sort.as_raw(), std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { bitwuzla_mk_const( sort.as_raw(), symbol) }
+                unsafe { bitwuzla_mk_const(sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
@@ -230,6 +226,8 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
 
     /// Does the `FP` have a constant value?
     ///
+    /// Note: bitwuzla `is_const` is something entirely different
+    ///
     /// # Examples
     ///
     /// ```
@@ -271,7 +269,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         => div, BITWUZLA_KIND_FP_DIV
     );
 
-    binop_bv!(
+    binop_cmp!(
         /// Floating-point equality. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
         => _eq, BITWUZLA_KIND_FP_EQUAL
@@ -282,49 +280,49 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         => fma, BITWUZLA_KIND_FP_FMA
     );
 
-    binop_bv!(
+    binop_cmp!(
         /// Floating-point greater than or equal. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
         => geq, BITWUZLA_KIND_FP_GEQ
     );
 
-    binop_bv!(
+    binop_cmp!(
         /// Floating-point greater than. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
         => gt, BITWUZLA_KIND_FP_GT
     );
 
-    unop_bv!(
+    unop_cmp!(
         /// Floating-point is Nan tester.
         /// Resulting `BV` will have bitwidth 1.
         => is_nan, BITWUZLA_KIND_FP_IS_NAN
     );
 
-    unop_bv!(
+    unop_cmp!(
         /// Floating-point is negative tester.
         /// Resulting `BV` will have bitwidth 1.
         => is_neg, BITWUZLA_KIND_FP_IS_NEG
     );
 
-    unop_bv!(
+    unop_cmp!(
         /// Floating-point is subnormal tester.
         /// Resulting `BV` will have bitwidth 1.
         => is_subnormal, BITWUZLA_KIND_FP_IS_SUBNORMAL
     );
 
-    unop_bv!(
+    unop_cmp!(
         /// Floating-point is zero tester.
         /// Resulting `BV` will have bitwidth 1.
         => is_zero, BITWUZLA_KIND_FP_IS_ZERO
     );
 
-    binop_bv!(
+    binop_cmp!(
         /// Floating-point less than. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
         => lt, BITWUZLA_KIND_FP_LT
     );
 
-    binop_bv!(
+    binop_cmp!(
         /// Floating-point greater than or equal. `self` and `other` must have the same bitwidth.
         /// Resulting `BV` will have bitwidth 1.
         => leq, BITWUZLA_KIND_FP_LEQ
@@ -360,13 +358,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         let rm = rounding_mode.to_node(self.btor.clone());
         Self {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term2(
-                    BITWUZLA_KIND_FP_RTI,
-                    rm.node,
-                    self.node,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_FP_RTI, rm.node, self.node) },
         }
     }
 
@@ -384,13 +376,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         // TODO: assert width?
         BV {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term1_indexed1(
-                    BITWUZLA_KIND_FP_TO_SBV,
-                    self.node,
-                    width,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term1_indexed1(BITWUZLA_KIND_FP_TO_SBV, self.node, width) },
         }
     }
 
@@ -398,13 +384,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         // TODO: assert width?
         BV {
             btor: self.btor.clone(),
-            node: unsafe {
-                bitwuzla_mk_term1_indexed1(
-                    BITWUZLA_KIND_FP_TO_UBV,
-                    self.node,
-                    width,
-                )
-            },
+            node: unsafe { bitwuzla_mk_term1_indexed1(BITWUZLA_KIND_FP_TO_UBV, self.node, width) },
         }
     }
 

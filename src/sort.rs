@@ -24,9 +24,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     /// `width` must not be `0`.
     pub fn bitvector(_btor: R, width: u64) -> Self {
         assert!(width > 0, "bitwuzla: cannot create 0-width bitvector sort");
-        Self::from_raw(_btor.clone(), unsafe {
-            bitwuzla_mk_bv_sort(width)
-        })
+        Self::from_raw(_btor.clone(), unsafe { bitwuzla_mk_bv_sort(width) })
     }
 
     /// Create the Boolean sort.
@@ -34,9 +32,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     /// In bitwuzla, there is no distinction between Booleans and bitvectors of
     /// bitwidth one, so this is equivalent to `Sort::bitvector(btor, 1)`.
     pub fn bool(btor: R) -> Self {
-        Self::from_raw(btor.clone(), unsafe {
-            bitwuzla_mk_bool_sort()
-        })
+        Self::from_raw(btor.clone(), unsafe { bitwuzla_mk_bool_sort() })
     }
 
     /// Create a floating-point sort for the given exponent and significand width.
@@ -65,9 +61,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     }
 
     pub fn rounding_mode(btor: R) -> Self {
-        Self::from_raw(btor.clone(), unsafe {
-            bitwuzla_mk_rm_sort()
-        })
+        Self::from_raw(btor.clone(), unsafe { bitwuzla_mk_rm_sort() })
     }
 
     /// Is `self` an array sort?

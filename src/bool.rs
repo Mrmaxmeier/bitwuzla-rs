@@ -22,9 +22,10 @@ macro_rules! unop {
     ( $(#[$attr:meta])* => $f:ident, $kind:ident ) => {
         $(#[$attr])*
         pub fn $f(&self) -> Self {
+            let tm = self.btor.borrow().tm;
             Self {
                 btor: self.btor.clone(),
-                node: unsafe { bitwuzla_mk_term1($kind, self.node) },
+                node: unsafe { bitwuzla_mk_term1(tm, $kind, self.node) },
             }
         }
     };
@@ -36,9 +37,10 @@ macro_rules! binop {
     ( $(#[$attr:meta])* => $f:ident, $kind:ident ) => {
         $(#[$attr])*
         pub fn $f(&self, other: &Self) -> Self {
+            let tm = self.btor.borrow().tm;
             Self {
                 btor: self.btor.clone(),
-                node:  unsafe { bitwuzla_mk_term2($kind, self.node, other.node) },
+                node:  unsafe { bitwuzla_mk_term2(tm, $kind, self.node, other.node) },
             }
         }
     };
@@ -50,13 +52,14 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     /// The `symbol`, if present, will be used to identify the `BV` when printing
     /// a model or dumping to file. It must be unique if it is present.
     pub fn new(btor: R, symbol: Option<&str>) -> Self {
+        let tm = btor.borrow().tm;
         let sort = Sort::bool(btor.clone());
         let node = match symbol {
-            None => unsafe { bitwuzla_mk_const(sort.as_raw(), std::ptr::null()) },
+            None => unsafe { bitwuzla_mk_const(tm, sort.as_raw(), std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const c_char;
-                unsafe { bitwuzla_mk_const(sort.as_raw(), symbol) }
+                unsafe { bitwuzla_mk_const(tm, sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
@@ -65,10 +68,11 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     /// Create a new constant `BV` representing the given `bool` (either constant
     /// `true` or constant `false`).
     pub fn from_bool(btor: R, b: bool) -> Self {
+        let tm = btor.borrow().tm;
         let node = if b {
-            unsafe { bitwuzla_mk_true() }
+            unsafe { bitwuzla_mk_true(tm) }
         } else {
-            unsafe { bitwuzla_mk_false() }
+            unsafe { bitwuzla_mk_false(tm) }
         };
         Self { btor, node }
     }
@@ -129,7 +133,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
 
     /// Set the symbol of the `BV`. See notes on
     /// [`BV::new()`](struct.BV.html#method.new).
-    pub fn set_symbol(&mut self, symbol: Option<&str>) {
+    pub fn set_symbol(&mut self, _symbol: Option<&str>) {
         todo!()
         /*
         match symbol {
@@ -237,10 +241,11 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     /// assert_eq!(y.get_a_solution().as_u64().unwrap(), 1);
     /// ```
     pub fn cond_bv(&self, truebv: &BV<R>, falsebv: &BV<R>) -> BV<R> {
+        let tm = self.btor.borrow().tm;
         BV {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term3(BITWUZLA_KIND_ITE, self.node, truebv.node, falsebv.node)
+                bitwuzla_mk_term3(tm, BITWUZLA_KIND_ITE, self.node, truebv.node, falsebv.node)
             },
         }
     }
@@ -250,10 +255,12 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     ///
     /// `self` must have bitwidth 1.
     pub fn cond_array(&self, true_array: &Array<R>, false_array: &Array<R>) -> Array<R> {
+        let tm = self.btor.borrow().tm;
         Array {
             btor: self.btor.clone(),
             node: unsafe {
                 bitwuzla_mk_term3(
+                    tm,
                     BITWUZLA_KIND_ITE,
                     self.node,
                     true_array.node,
@@ -268,10 +275,17 @@ impl<R: Borrow<Bitwuzla> + Clone> Bool<R> {
     ///
     /// `self` must have bitwidth 1.
     pub fn cond_fp(&self, true_fp: &FP<R>, false_fp: &FP<R>) -> FP<R> {
+        let tm = self.btor.borrow().tm;
         FP {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term3(BITWUZLA_KIND_ITE, self.node, true_fp.node, false_fp.node)
+                bitwuzla_mk_term3(
+                    tm,
+                    BITWUZLA_KIND_ITE,
+                    self.node,
+                    true_fp.node,
+                    false_fp.node,
+                )
             },
         }
     }
@@ -317,14 +331,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Clone for Bool<R> {
 
 impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for Bool<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let string = crate::util::tmp_file_to_string(
-            |tmpfile| unsafe {
-                bitwuzla_term_print(self.node, tmpfile);
-            },
-            true,
-        )
-        .trim()
-        .to_owned();
-        write!(f, "{}", string)
+        let string = unsafe { CStr::from_ptr(bitwuzla_term_to_string(self.node)) };
+        write!(f, "{}", string.to_string_lossy())
     }
 }

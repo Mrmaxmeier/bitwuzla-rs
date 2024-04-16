@@ -22,9 +22,10 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
 
     /// Create a bitvector sort for the given bitwidth.
     /// `width` must not be `0`.
-    pub fn bitvector(_btor: R, width: u64) -> Self {
+    pub fn bitvector(btor: R, width: u64) -> Self {
+        let tm = btor.borrow().tm;
         assert!(width > 0, "bitwuzla: cannot create 0-width bitvector sort");
-        Self::from_raw(_btor.clone(), unsafe { bitwuzla_mk_bv_sort(width) })
+        Self::from_raw(btor, unsafe { bitwuzla_mk_bv_sort(tm, width) })
     }
 
     /// Create the Boolean sort.
@@ -32,11 +33,13 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     /// In bitwuzla, there is no distinction between Booleans and bitvectors of
     /// bitwidth one, so this is equivalent to `Sort::bitvector(btor, 1)`.
     pub fn bool(btor: R) -> Self {
-        Self::from_raw(btor.clone(), unsafe { bitwuzla_mk_bool_sort() })
+        let tm = btor.borrow().tm;
+        Self::from_raw(btor, unsafe { bitwuzla_mk_bool_sort(tm) })
     }
 
     /// Create a floating-point sort for the given exponent and significand width.
     pub fn fp(btor: R, exp_width: u64, sig_width: u64) -> Self {
+        let tm = btor.borrow().tm;
         assert!(
             exp_width > 0,
             "bitwuzla: cannot create 0-exp_width bitvector sort"
@@ -45,8 +48,8 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
             sig_width > 0,
             "bitwuzla: cannot create 0-sig_width bitvector sort"
         );
-        Self::from_raw(btor.clone(), unsafe {
-            bitwuzla_mk_fp_sort(exp_width, sig_width)
+        Self::from_raw(btor, unsafe {
+            bitwuzla_mk_fp_sort(tm, exp_width, sig_width)
         })
     }
 
@@ -55,13 +58,15 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     ///
     /// Both the `index` and `element` sorts must be bitvector sorts.
     pub fn array(btor: R, index: &Sort<R>, element: &Sort<R>) -> Self {
-        Self::from_raw(btor.clone(), unsafe {
-            bitwuzla_mk_array_sort(index.as_raw(), element.as_raw())
+        let tm = btor.borrow().tm;
+        Self::from_raw(btor, unsafe {
+            bitwuzla_mk_array_sort(tm, index.as_raw(), element.as_raw())
         })
     }
 
     pub fn rounding_mode(btor: R) -> Self {
-        Self::from_raw(btor.clone(), unsafe { bitwuzla_mk_rm_sort() })
+        let tm = btor.borrow().tm;
+        Self::from_raw(btor, unsafe { bitwuzla_mk_rm_sort(tm) })
     }
 
     /// Is `self` an array sort?

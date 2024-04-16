@@ -1,4 +1,4 @@
-use std::{ffi::CString, fmt, time::Duration};
+use std::{ffi::CString, time::Duration};
 
 use bitwuzla_sys::{
     bitwuzla_options_delete,
@@ -6,7 +6,8 @@ use bitwuzla_sys::{
     bitwuzla_set_option,
     bitwuzla_set_option_mode,
     BITWUZLA_OPT_PRODUCE_MODELS,
-    BITWUZLA_OPT_TIME_LIMIT_PER, BITWUZLA_OPT_PRODUCE_UNSAT_ASSUMPTIONS,
+    BITWUZLA_OPT_PRODUCE_UNSAT_ASSUMPTIONS,
+    BITWUZLA_OPT_TIME_LIMIT_PER,
 };
 
 use crate::option::*;
@@ -127,7 +128,11 @@ impl BitwuzlaOptions {
 
     pub fn produce_unsat_assumptions(mut self, v: bool) -> Self {
         unsafe {
-            bitwuzla_set_option(self.as_raw(), BITWUZLA_OPT_PRODUCE_UNSAT_ASSUMPTIONS, v as u64);
+            bitwuzla_set_option(
+                self.as_raw(),
+                BITWUZLA_OPT_PRODUCE_UNSAT_ASSUMPTIONS,
+                v as u64,
+            );
         }
         self
     }

@@ -34,7 +34,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     ///
     /// // `arr` is an `Array` which maps 8-bit values to 8-bit values
     /// let arr = Array::new(&btor, 8, 8, Some("arr"));
-    /// assert_eq!(format!("{:?}", arr), "(declare-const arr (Array (_ BitVec 8) (_ BitVec 8)))");
+    /// assert_eq!(format!("{:?}", arr), "arr");
     ///
     /// // Write the value `3` to array index `7`
     /// let three = BV::from_u32(&btor, 3, 8);
@@ -55,16 +55,17 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// assert_eq!(btor.sat(), SolverResult::Sat);
     /// ```
     pub fn new(btor: R, index_width: u64, element_width: u64, symbol: Option<&str>) -> Self {
+        let tm = btor.borrow().tm;
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
 
         let node = match symbol {
-            None => unsafe { bitwuzla_mk_const(array_sort.as_raw(), std::ptr::null()) },
+            None => unsafe { bitwuzla_mk_const(tm, array_sort.as_raw(), std::ptr::null()) },
             Some(symbol) => {
                 let cstring = CString::new(symbol).unwrap();
                 let symbol = cstring.as_ptr() as *const libc::c_char;
-                unsafe { bitwuzla_mk_const(array_sort.as_raw(), symbol) }
+                unsafe { bitwuzla_mk_const(tm, array_sort.as_raw(), symbol) }
             },
         };
         Self { btor, node }
@@ -109,10 +110,11 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// //assert_eq!(read_bv.get_a_solution().as_u64().unwrap(), 42);
     /// ```
     pub fn new_initialized(btor: R, index_width: u64, element_width: u64, val: &BV<R>) -> Self {
+        let tm = btor.borrow().tm;
         let index_sort = Sort::bitvector(btor.clone(), index_width);
         let element_sort = Sort::bitvector(btor.clone(), element_width);
         let array_sort = Sort::array(btor.clone(), &index_sort, &element_sort);
-        let node = unsafe { bitwuzla_mk_const_array(array_sort.as_raw(), val.node) };
+        let node = unsafe { bitwuzla_mk_const_array(tm, array_sort.as_raw(), val.node) };
         Self { btor, node }
     }
 
@@ -156,35 +158,47 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
 
     /// Array equality. `self` and `other` must have the same index and element widths.
     pub fn _eq(&self, other: &Array<R>) -> BV<R> {
+        let tm = self.btor.borrow().tm;
         BV {
             btor: self.btor.clone(),
-            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_EQUAL, self.node, other.node) },
+            node: unsafe { bitwuzla_mk_term2(tm, BITWUZLA_KIND_EQUAL, self.node, other.node) },
         }
     }
 
     /// Array inequality. `self` and `other` must have the same index and element widths.
     pub fn _ne(&self, other: &Array<R>) -> BV<R> {
+        let tm = self.btor.borrow().tm;
         BV {
             btor: self.btor.clone(),
-            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_DISTINCT, self.node, other.node) },
+            node: unsafe { bitwuzla_mk_term2(tm, BITWUZLA_KIND_DISTINCT, self.node, other.node) },
         }
     }
 
     /// Array read: get the value in the `Array` at the given `index`
     pub fn read(&self, index: &BV<R>) -> BV<R> {
+        let tm = self.btor.borrow().tm;
         BV {
             btor: self.btor.clone(),
-            node: unsafe { bitwuzla_mk_term2(BITWUZLA_KIND_ARRAY_SELECT, self.node, index.node) },
+            node: unsafe {
+                bitwuzla_mk_term2(tm, BITWUZLA_KIND_ARRAY_SELECT, self.node, index.node)
+            },
         }
     }
 
     /// Array write: return a new `Array` which has `value` at position `index`,
     /// and all other elements unchanged.
     pub fn write(&self, index: &BV<R>, value: &BV<R>) -> Self {
+        let tm = self.btor.borrow().tm;
         Self {
             btor: self.btor.clone(),
             node: unsafe {
-                bitwuzla_mk_term3(BITWUZLA_KIND_ARRAY_STORE, self.node, index.node, value.node)
+                bitwuzla_mk_term3(
+                    tm,
+                    BITWUZLA_KIND_ARRAY_STORE,
+                    self.node,
+                    index.node,
+                    value.node,
+                )
             },
         }
     }
@@ -201,15 +215,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Clone for Array<R> {
 
 impl<R: Borrow<Bitwuzla> + Clone> fmt::Debug for Array<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let format = CString::new("smt2").unwrap();
-        let res = crate::util::tmp_file_to_string(
-            |tmpfile| unsafe {
-                bitwuzla_term_print(self.node, tmpfile);
-            },
-            true,
-        )
-        .trim()
-        .to_owned();
-        write!(f, "{}", res)
+        let string = unsafe { CStr::from_ptr(bitwuzla_term_to_string(self.node)) };
+        write!(f, "{}", string.to_string_lossy())
     }
 }

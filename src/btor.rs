@@ -7,7 +7,8 @@ use std::fmt;
 /// A `Btor` represents an instance of the bitwuzla solver.
 /// Each `BV` and `Array` is created in a particular `Btor` instance.
 pub struct Bitwuzla {
-    btor: *mut bitwuzla_sys::Bitwuzla,
+    pub(crate) tm: *mut bitwuzla_sys::BitwuzlaTermManager,
+    pub(crate) btor: *mut bitwuzla_sys::Bitwuzla,
 }
 pub type Btor = Bitwuzla;
 
@@ -43,8 +44,10 @@ impl Bitwuzla {
     }
 
     pub(crate) fn new_from_options(mut options: crate::BitwuzlaOptions) -> Self {
+        let tm = unsafe { bitwuzla_term_manager_new() };
         Self {
-            btor: unsafe { bitwuzla_new(options.as_raw()) },
+            tm,
+            btor: unsafe { bitwuzla_new(tm, options.as_raw()) },
         }
     }
 

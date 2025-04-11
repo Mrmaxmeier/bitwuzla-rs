@@ -45,7 +45,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     /// let read_bv = arr2.read(&seven);
     ///
     /// // should be the value `3`
-    /// assert_eq!(read_bv.as_u64().unwrap(), 3);
+    /// assert_eq!(read_bv.simplify().as_u64().unwrap(), 3);
     ///
     /// // Reading other indices should return a unconstrained values.
     /// let two = BV::from_u32(&btor, 2, 8);
@@ -102,7 +102,7 @@ impl<R: Borrow<Bitwuzla> + Clone> Array<R> {
     ///
     /// // Read back out the value at index `7`. It should be `3`.
     /// let read_bv = arr2.read(&seven);
-    /// assert_eq!(read_bv.as_u64().unwrap(), 3);
+    /// assert_eq!(read_bv.simplify().as_u64().unwrap(), 3);
     ///
     /// // Reading the value at any other index should still produce `42`.
     /// let read_bv = arr2.read(&BV::from_u32(&btor, 99, 8));

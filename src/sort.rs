@@ -38,6 +38,11 @@ impl<R: Borrow<Bitwuzla> + Clone> Sort<R> {
     }
 
     /// Create a floating-point sort for the given exponent and significand width.
+    /// Bitwuzla supports the following floating-point formats:
+    /// - FP_FLOAT16: 5-bit exponent, 11-bit significand
+    /// - FP_FLOAT32: 8-bit exponent, 24-bit significand
+    /// - FP_FLOAT64: 11-bit exponent, 53-bit significand
+    /// - FP_FLOAT128: 15-bit exponent, 113-bit significand
     pub fn fp(btor: R, exp_width: u64, sig_width: u64) -> Self {
         let tm = btor.borrow().tm;
         assert!(

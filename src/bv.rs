@@ -277,6 +277,14 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         }
     }
 
+    /// Simplify the `BV` using the current state of the `Btor`.
+    pub fn simplify(&self) -> Self {
+        Self {
+            node: unsafe { bitwuzla_simplify_term(self.btor.borrow().as_raw(), self.node) },
+            btor: self.btor.clone(),
+        }
+    }
+
     /// Get the value of the `BV` as a string of '0's and '1's. This method is
     /// only effective for `BV`s which are constant, as indicated by
     /// [`BV::is_const()`](struct.BV.html#method.is_const).
@@ -748,7 +756,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     /// let bv = BV::from_u32(&btor, 3, 8);
     ///
     /// // Zero-extend by 56 bits
-    /// let extended = bv.uext(56);
+    /// let extended = bv.uext(56).simplify();
     ///
     /// // Resulting `BV` is 64 bits and has value `3`
     /// assert_eq!(extended.get_width(), 64);
@@ -778,7 +786,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     /// let bv = BV::from_i32(btor.clone(), -3, 8);
     ///
     /// // Sign-extend by 56 bits
-    /// let extended = bv.sext(56);
+    /// let extended = bv.sext(56).simplify();
     ///
     /// // Resulting `BV` is 64 bits and has value `-3`
     /// assert_eq!(extended.get_width(), 64);
@@ -810,7 +818,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
     /// let bv = BV::from_binary_str(btor.clone(), "01100101");
     ///
     /// // Slice out bits 1 through 4, inclusive
-    /// let slice = bv.slice(4, 1);
+    /// let slice = bv.slice(4, 1).simplify();
     ///
     /// // Resulting slice has width `4` and value `"0010"`
     /// assert_eq!(slice.get_width(), 4);
@@ -854,12 +862,12 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
         /// let ones = BV::ones(btor.clone(), 8);
         ///
         /// // The concatenation has length 16 and this value
-        /// let result = ones.concat(&one);
+        /// let result = ones.concat(&one).simplify();
         /// assert_eq!(result.get_width(), 16);
         /// assert_eq!(result.as_binary_str().unwrap(), "1111111100000001");
         ///
         /// // Concatenate in the other order
-        /// let result = one.concat(&ones);
+        /// let result = one.concat(&ones).simplify();
         /// assert_eq!(result.get_width(), 16);
         /// assert_eq!(result.as_binary_str().unwrap(), "0000000111111111");
         /// ```
@@ -903,6 +911,7 @@ impl<R: Borrow<Bitwuzla> + Clone> BV<R> {
                 )
             },
         }
+        .simplify()
     }
 }
 

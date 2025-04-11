@@ -111,7 +111,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     /// let btor = Bitwuzla::new();
     ///
     /// // An 8-bit unconstrained `BV` with the symbol "foo"
-    /// let fp = FP::new(&btor, 8, 23, Some("foo"));
+    /// let fp = FP::new(&btor, 8, 24, Some("foo"));
     /// assert_eq!(format!("{:?}", fp), "foo");
     ///
     /// // Assert that it must be greater than `3`
@@ -156,6 +156,14 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
         BV::from_u64(btor, val.to_bits(), 64).to_fp(11, 52 + 1)
     }
 
+    /// Simplify the `FP` using the current state of the `Btor`.
+    pub fn simplify(&self) -> Self {
+        Self {
+            node: unsafe { bitwuzla_simplify_term(self.btor.borrow().as_raw(), self.node) },
+            btor: self.btor.clone(),
+        }
+    }
+
     /// Get the value of the `BV` as a string of '0's and '1's. This method is
     /// only effective for `BV`s which are constant, as indicated by
     /// [`BV::is_const()`](struct.BV.html#method.is_const).
@@ -183,8 +191,9 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     /// assert_eq!(unconstrained.as_str(), None);
     /// ```
     pub fn as_str(&self) -> Option<String> {
-        if self.is_const() {
-            let string = unsafe { CStr::from_ptr(bitwuzla_term_to_string(self.node)) };
+        let self_ = self.simplify();
+        if self_.is_const() {
+            let string = unsafe { CStr::from_ptr(bitwuzla_term_to_string(self_.node)) };
             Some(string.to_string_lossy().into_owned())
         } else {
             None
@@ -200,26 +209,38 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     /// // as_f64 should round-trip for every edgecase:
     /// for val in [-0., 0., f64::MIN, f64::MAX, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
     ///     let leet = FP::from_f64(&btor, val);
-    ///     assert_eq!(leet.as_f64(), Some(val));
+    ///     assert_eq!(leet.simplify().as_f64(), Some(val));
     /// }
     /// ```
     pub fn as_f64(&self) -> Option<f64> {
         if self.is_const() {
-            // TODO: assert that this is a binary64 fp?
             let s = self.as_str()?;
-            dbg!(&s);
-            // TODO: this is fp32
             assert!(s.starts_with("(fp #b"));
-            assert_eq!(
-                s.len(),
-                "(fp #b0 #b10000001 #b01000000000000000000000)".len()
-            );
-            // "(fp #b0 #b10000001 #b01000000000000000000000)"
-            //  012345^789^^^^^^^^  20
-            //                   18
-            // let sign = &s[6 .. 7] == "1";
-            // Some(u64::from_str_radix(&s, 2).unwrap())
-            todo!()
+            let bits = s
+                .chars()
+                .filter(|c| c.is_digit(2))
+                .map(|c| c == '1')
+                .collect::<Vec<_>>();
+            match bits.len() {
+                // "(fp #b0 #b10000001 #b01000000000000000000000)"
+                32 => {
+                    let mut val = 0u32;
+                    for i in 0 .. 32 {
+                        val |= (bits[i] as u32) << i;
+                    }
+                    Some(f32::from_bits(val.to_be()) as f64);
+                    todo!()
+                },
+                64 => {
+                    let mut val = 0u64;
+                    for i in 0 .. 64 {
+                        val |= (bits[i] as u64) << i;
+                    }
+                    Some(f64::from_bits(val.to_be()));
+                    todo!()
+                },
+                _ => unimplemented!(),
+            }
         } else {
             None
         }
@@ -248,7 +269,7 @@ impl<R: Borrow<Bitwuzla> + Clone> FP<R> {
     /// assert!(!sum.is_const());
     ///
     /// // But pi + pi is constant
-    /// let tau = pi.add(&pi, RoundingMode::RTN);
+    /// let tau = pi.add(&pi, RoundingMode::RTN).simplify();
     /// assert!(tau.is_const());
     /// ```
     pub fn is_const(&self) -> bool {

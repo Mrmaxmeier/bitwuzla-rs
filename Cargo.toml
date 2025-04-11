@@ -1,7 +1,10 @@
 [package]
 name = "bitwuzla"
-version = "0.1.0"
-authors = ["Craig Disselkoen <craigdissel@gmail.com>"]
+version = "0.7.0"
+authors = [
+    "Mrmaxmeier <Mrmaxmeier@gmail.com>",
+    "Craig Disselkoen <craigdissel@gmail.com>",
+]
 edition = "2018"
 description = "Safe high-level bindings for the Bitwuzla SMT solver"
 # documentation = "https://docs.rs/bitwuzla"
@@ -9,11 +12,12 @@ description = "Safe high-level bindings for the Bitwuzla SMT solver"
 readme = "README.md"
 keywords = ["boolector", "bitwuzla", "smt", "ffi", "bindings"]
 license = "MIT"
+rust-version = "1.82"
 
 [dependencies]
-# bitwuzla-sys = "0.2.0"
+bitwuzla-sys = "0.7.0"
 # bitwuzla-sys = { path = "../bitwuzla-sys" }
-bitwuzla-sys = { git = "https://github.com/Mrmaxmeier/bitwuzla-sys" }
+# bitwuzla-sys = { git = "https://github.com/Mrmaxmeier/bitwuzla-sys" }
 libc = "0.2.73"
 
 [features]
